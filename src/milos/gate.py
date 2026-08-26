@@ -1,0 +1,190 @@
+"""The governance gate — runs inside the sandbox, enforced in code, never by prompt.
+
+Two hooks into claude_agent_sdk:
+  - a PreToolUse hook fires for *every* tool call: the audit row is written and
+    awaited before the tool executes, then the kill switch and the policy's
+    tool denylist are checked, and a policy require_approval match downgrades
+    the decision to "ask" so the call falls through to can_use_tool even when
+    the session's permission_mode would have let it straight through;
+  - can_use_tool fires for gated calls: it files an approval document and
+    blocks until a human (SDK callback or CLI) decides, or the timeout denies.
+
+The gate is pinned to the policy version the session was admitted under — the
+runner loads that exact version, so what evidence says was in force and what
+the gate enforced are the same document.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import time
+from typing import Any
+
+from claude_agent_sdk.types import HookMatcher
+
+from . import policy as policy_module
+from .env import DEFAULT_APPROVAL_TIMEOUT
+from .journal import JournalWriter
+from .store import StoreProtocol, is_dead
+from .types import PermissionResult, PermissionResultAllow, PermissionResultDeny
+
+
+def call_hash(tool_name: str, tool_input: dict[str, Any]) -> str:
+    """Deterministic id for a tool call, used as the approval document's key.
+
+    Canonical JSON (sorted keys, fixed separators) makes the hash stable across
+    processes, so the runner and an operator CLI always name the same approval
+    doc — and any change to the input yields a different hash, requiring a
+    fresh approval.
+    """
+    canonical = json.dumps(tool_input, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(f"{tool_name}\n{canonical}".encode()).hexdigest()
+
+
+def _decision(decision: str, reason: str) -> dict[str, Any]:
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+class Gate:
+    """One session's enforcement point: audit hook, kill switch, policy rules,
+    approval loop."""
+
+    def __init__(
+        self,
+        store: StoreProtocol,
+        session_id: str,
+        journal: JournalWriter,
+        *,
+        policy: dict[str, Any],
+        approval_timeout: float = DEFAULT_APPROVAL_TIMEOUT,
+        poll_interval: float = 1.0,
+    ) -> None:
+        self._store = store
+        self._session_id = session_id
+        # The runner's writer: sharing it puts audit and approval records in
+        # the same seq order as the messages they interleave with.
+        self._journal = journal
+        self._policy = policy
+        self._approval_timeout = approval_timeout
+        self._poll_interval = poll_interval
+
+    def hooks(self) -> dict[str, list[HookMatcher]]:
+        return {"PreToolUse": [HookMatcher(matcher=None, hooks=[self._pre_tool_use])]}
+
+    async def _killed(self) -> bool:
+        return is_dead(await self._store.get_session(self._session_id))
+
+    async def _pre_tool_use(
+        self, input_data: dict[str, Any], tool_use_id: str | None, context: Any
+    ) -> dict[str, Any]:
+        tool_name = input_data.get("tool_name", "")
+        tool_input = input_data.get("tool_input") or {}
+        killed = await self._killed()
+        denied = policy_module.tool_denied(self._policy, tool_name)
+        rule = None if (killed or denied) else policy_module.approval_rule(self._policy, tool_name)
+        if killed:
+            decision = "killed"
+        elif denied:
+            decision = "policy_denied"
+        elif rule:
+            # The call is not decided here — it is forced through the human
+            # approval queue below, whatever the permission_mode says.
+            decision = "policy_ask"
+        else:
+            decision = "allowed"
+        # The audit record is committed to the journal before the tool is
+        # allowed to run.
+        await self._journal.append(
+            "tool_call",
+            {
+                "tool_name": tool_name,
+                "input": tool_input,
+                "call_hash": call_hash(tool_name, tool_input),
+                "tool_use_id": tool_use_id,
+                "decision": decision,
+            },
+        )
+        if killed:
+            return _decision("deny", "session disabled by operator")
+        if denied:
+            return _decision("deny", "denied by policy")
+        if rule:
+            return _decision("ask", rule["reason"])
+        return {}
+
+    async def can_use_tool(
+        self, tool_name: str, tool_input: dict[str, Any], context: Any
+    ) -> PermissionResult:
+        hash_ = call_hash(tool_name, tool_input)
+        rule = policy_module.approval_rule(self._policy, tool_name)
+        await self._store.request_approval(
+            self._session_id,
+            hash_,
+            tool_name,
+            tool_input,
+            tool_use_id=getattr(context, "tool_use_id", None),
+            reason=rule["reason"] if rule else None,
+        )
+        # The approvals subcollection stays the operational queue (the gate
+        # polls it, operators decide on it); the journal gets mirror records so
+        # the transcript shows the wait and its outcome inline.
+        await self._journal.append(
+            "approval",
+            {
+                "phase": "requested",
+                "call_hash": hash_,
+                "tool_name": tool_name,
+                "reason": rule["reason"] if rule else None,
+            },
+        )
+        deadline = time.monotonic() + self._approval_timeout
+        while time.monotonic() < deadline:
+            approval = await self._store.get_approval(self._session_id, hash_) or {}
+            status = approval.get("status")
+            if status in ("allow", "deny"):
+                await self._journal.append(
+                    "approval",
+                    {
+                        "phase": "decided",
+                        "call_hash": hash_,
+                        "tool_name": tool_name,
+                        "status": status,
+                        "decided_by": approval.get("decided_by"),
+                        "deny_message": approval.get("deny_message"),
+                    },
+                )
+            if status == "allow":
+                return PermissionResultAllow()
+            if status == "deny":
+                return PermissionResultDeny(
+                    message=approval.get("deny_message") or "denied by operator"
+                )
+            if await self._killed():
+                return PermissionResultDeny(message="session disabled by operator")
+            await asyncio.sleep(self._poll_interval)
+        # Record the timeout as an explicit deny so the request doesn't linger
+        # as "pending" in the queue after the harness has already moved on —
+        # fail closed, and leave the evidence saying so.
+        await self._store.decide_approval(
+            self._session_id, hash_, allow=False, decided_by="timeout"
+        )
+        await self._journal.append(
+            "approval",
+            {
+                "phase": "decided",
+                "call_hash": hash_,
+                "tool_name": tool_name,
+                "status": "deny",
+                "decided_by": "timeout",
+                "deny_message": "approval timed out",
+            },
+        )
+        return PermissionResultDeny(message="approval timed out")
