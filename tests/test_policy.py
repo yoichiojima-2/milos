@@ -116,10 +116,6 @@ def test_validate_risk():
     with pytest.raises(PolicyError, match="missing"):
         validate_risk({"purpose": "x"})
     with pytest.raises(PolicyError, match="impact"):
-        validate_risk(
-            {"purpose": "x", "impact": "huge", "owner": "o", "review_by": "2027-01-01"}
-        )
+        validate_risk({"purpose": "x", "impact": "huge", "owner": "o", "review_by": "2027-01-01"})
     with pytest.raises(PolicyError, match="unknown"):
-        validate_risk(
-            {"purpose": "x", "impact": "low", "owner": "o", "review_by": "d", "extra": 1}
-        )
+        validate_risk({"purpose": "x", "impact": "low", "owner": "o", "review_by": "d", "extra": 1})

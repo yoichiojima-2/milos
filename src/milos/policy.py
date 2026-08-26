@@ -91,7 +91,9 @@ def validate_policy(doc: Any) -> dict[str, Any]:
     modes = doc.get("permission_modes", _SECTIONS["permission_modes"])
     if not isinstance(modes, dict) or set(modes) - {"deny"}:
         raise PolicyError("permission_modes must be a mapping with a 'deny' list")
-    policy["permission_modes"] = {"deny": _string_list("permission_modes.deny", modes.get("deny", []))}
+    policy["permission_modes"] = {
+        "deny": _string_list("permission_modes.deny", modes.get("deny", []))
+    }
 
     tools = doc.get("tools", _SECTIONS["tools"])
     if not isinstance(tools, dict) or set(tools) - {"deny"}:
