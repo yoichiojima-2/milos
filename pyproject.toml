@@ -1,0 +1,41 @@
+[project]
+name = "milos"
+version = "0.1.0"
+description = "Run claude-agent-sdk agents securely on your own GCP project, with policy-as-code, audited tool calls, and exportable compliance evidence"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = [
+    "claude-agent-sdk>=0.2",
+    "google-cloud-firestore>=2.19",
+    "google-cloud-storage>=2.18",
+    "google-cloud-run>=0.10",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff==0.15.8",
+]
+
+[project.scripts]
+milos = "milos.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/milos"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
