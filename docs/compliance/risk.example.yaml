@@ -1,0 +1,10 @@
+# An agent's AI risk block (ISO 42001 6.1.2) — required on agents.create /
+# update when the active policy sets oversight.require_risk_block. Pass with
+# --risk-* flags on `milos agents create`, or as the `risk=` argument in the
+# SDK. The agents collection is the AI risk register; `milos agents` flags
+# entries whose review_by has passed.
+
+purpose: "Summarize inbound support tickets into the triage queue"
+impact: low          # low | medium | high — the AI impact level, your assessment
+owner: "you@example.com"   # the accountable human, not a team alias
+review_by: "2027-01-01"    # when this assessment must be revisited

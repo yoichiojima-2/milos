@@ -1,0 +1,51 @@
+# A permissive starter policy — apply it to unblock a fresh install:
+#
+#     milos policies apply docs/compliance/policy.example.yaml
+#
+# milos refuses to start new sessions until some policy is active, so even a
+# dev project applies one; tighten it section by section as the deployment
+# hardens. Every key is optional; unknown keys are rejected. Applying writes
+# an immutable new version and activates it — versions are never edited.
+
+# Which models sessions may request. Glob patterns; ["*"] allows anything.
+models:
+  allow: ["*"]
+
+# Where model traffic may go. Omitting "anthropic" bans the API-key escape
+# hatch outright — traffic then stays inside GCP (Vertex).
+model_backends: [vertex]
+
+# Permission modes sessions may not run under.
+permission_modes:
+  deny: [bypassPermissions]
+
+# Tools no session may call, whatever its own options say. Enforced at
+# session creation (rejected from allowed_tools/tools) AND at the gate on
+# every call (audit decision "policy_denied").
+tools:
+  deny: []
+
+# Calls that must wait for a human decision even when the session's
+# permission_mode would let them through. The reason lands on the approval
+# request and in the journal.
+require_approval: []
+#  - tools: ["Bash", "mcp__*"]
+#    reason: "shell and MCP calls need human sign-off"
+
+# Ceilings, not defaults: a session asking for more is clamped; one asking
+# for nothing gets the ceiling injected.
+budgets: {}
+#  max_budget_usd: 20.0
+#  max_turns: 200
+
+# ISO 42001: require every stored agent to carry a risk block
+# {purpose, impact, owner, review_by} — the AI risk register.
+oversight:
+  require_risk_block: false
+
+# Declarative mirror of the deployment's retention (the enforcement lives in
+# Terraform lifecycle rules and `milos sessions purge`); recorded here so the
+# evidence export shows the schedule that was in force.
+retention: {}
+#  session_state_days: 30
+#  journal_days: 365
