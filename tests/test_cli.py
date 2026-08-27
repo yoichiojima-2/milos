@@ -208,10 +208,13 @@ def test_settings_show_reports_active_policy(store, capsys):
 
 @pytest.fixture
 def gcs(monkeypatch):
-    from milos import state
+    from milos import skills, state
 
     fake = FakeGcsBucket()
+    # both namespaces: write/read paths resolve _bucket inside state, while
+    # skills.stats/files/push-prune use the from-imported copy in skills
     monkeypatch.setattr(state, "_bucket", lambda project, bucket_name: fake)
+    monkeypatch.setattr(skills, "_bucket", lambda project, bucket_name: fake)
     return fake
 
 
