@@ -48,13 +48,62 @@ def restore(project: str, bucket_name: str, prefix: str, root: Path) -> int:
     return count
 
 
-def checkpoint(project: str, bucket_name: str, prefix: str, root: Path) -> int:
-    """Upload root to the prefix; returns the file count."""
+def checkpoint(
+    project: str, bucket_name: str, prefix: str, root: Path, exclude: tuple[str, ...] = ()
+) -> int:
+    """Upload root to the prefix, skipping relative paths under any exclude
+    prefix (mounted skills checkpoint from their own prefix, never as session
+    state); returns the file count."""
     bucket = _bucket(project, bucket_name)
     count = 0
     for path in root.rglob("*"):
         if not path.is_file() or path.is_symlink():
             continue
+        if any(str(path.relative_to(root)).startswith(skip) for skip in exclude):
+            continue
         bucket.blob(prefix + str(path.relative_to(root))).upload_from_filename(path)
         count += 1
     return count
+
+
+# --- single-file access under a prefix, shared by workspaces.py and skills.py ---
+
+
+def content_type(file: str) -> str:
+    import mimetypes
+
+    return mimetypes.guess_type(file)[0] or "application/octet-stream"
+
+
+def read_in_prefix(
+    project: str, bucket_name: str, prefix: str, kind: str, file: str, *, max_bytes: int
+) -> tuple[bytes, str]:
+    """Download one file under the prefix: (data, content type). Raises
+    FileNotFoundError for a missing blob and ValueError over max_bytes."""
+    from .names import validate_file
+
+    blob = _bucket(project, bucket_name).blob(prefix + validate_file(kind, file))
+    if not blob.exists():
+        raise FileNotFoundError(f"gs://{bucket_name}/{prefix}{file}")
+    blob.reload()
+    if (blob.size or 0) > max_bytes:
+        raise ValueError(f"{file} is {blob.size} bytes (limit {max_bytes})")
+    return blob.download_as_bytes(), content_type(file)
+
+
+def write_in_prefix(
+    project: str, bucket_name: str, prefix: str, kind: str, file: str, data: bytes
+) -> None:
+    from .names import validate_file
+
+    blob = _bucket(project, bucket_name).blob(prefix + validate_file(kind, file))
+    blob.upload_from_string(data, content_type=content_type(file))
+
+
+def delete_in_prefix(project: str, bucket_name: str, prefix: str, kind: str, file: str) -> None:
+    from .names import validate_file
+
+    blob = _bucket(project, bucket_name).blob(prefix + validate_file(kind, file))
+    if not blob.exists():
+        raise FileNotFoundError(f"gs://{bucket_name}/{prefix}{file}")
+    blob.delete()

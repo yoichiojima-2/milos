@@ -32,6 +32,7 @@ _SERIALIZED_FIELDS = (
     "mcp_servers",
     "max_turns",
     "max_budget_usd",
+    "workspace",
 )
 
 # The built-in floor of the option-resolution chain (agents.resolve): a session
@@ -126,6 +127,14 @@ class AgentOptions:
     # them. Resolved when the session is created; the session stores the merged
     # result, so later edits to the agent never change a running session.
     agent: str | None = None
+    # Named workspace (workspaces/{name} in Firestore): sessions under the same
+    # workspace share one working directory (workspaces/{name}/ws/ in the
+    # bucket, exclusive lease) and the workspace's skills, and inherit the
+    # stored options as defaults (under agent, over global settings). HOME
+    # stays per-session, so transcripts and resume are unaffected. Fixed at
+    # session creation; on resume the stored options win, like every
+    # serialized field.
+    workspace: str | None = None
     project: str | None = None  # default: $MILOS_PROJECT or $GOOGLE_CLOUD_PROJECT
     region: str | None = None  # Cloud Run region; default: $MILOS_REGION or asia-northeast1
     vertex_region: str | None = None  # default: $CLOUD_ML_REGION or global
@@ -166,6 +175,8 @@ class AgentOptions:
         _validate_system_prompt(self.system_prompt)
         if self.agent is not None:
             validate_name("agent", self.agent)
+        if self.workspace is not None:
+            validate_name("workspace", self.workspace)
         for name, config in self.mcp_servers.items():
             if not isinstance(config, dict):
                 raise OptionsError(

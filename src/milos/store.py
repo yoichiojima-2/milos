@@ -197,6 +197,13 @@ class StoreProtocol(Protocol):
     async def list_approvals(self, session_id: str) -> list[dict[str, Any]]: ...
     async def list_all_pending_approvals(self) -> list[dict[str, Any]]: ...
     async def list_tool_calls(self, session_id: str) -> list[dict[str, Any]]: ...
+    async def claim_workspace(self, name: str, session_id: str, ttl_seconds: float) -> bool: ...
+    async def release_workspace(self, name: str, session_id: str) -> None: ...
+    async def create_workspace(self, name: str, doc: dict[str, Any]) -> None: ...
+    async def get_workspace(self, name: str) -> dict[str, Any] | None: ...
+    async def update_workspace(self, name: str, **fields: Any) -> None: ...
+    async def list_workspaces(self) -> list[dict[str, Any]]: ...
+    async def delete_workspace(self, name: str) -> None: ...
     async def get_settings(self) -> dict[str, Any] | None: ...
     async def update_settings(self, doc: dict[str, Any]) -> None: ...
     async def create_agent(self, name: str, doc: dict[str, Any]) -> None: ...
@@ -695,6 +702,93 @@ class Store:
             .order_by("ts")
         )
         return [_tool_call_row(s.to_dict()) async for s in query.stream()]
+
+    # --- workspaces (shared directory + option defaults; one doc holds config
+    # and lease) ---
+
+    def _workspace(self, name: str):
+        return self._db.collection("workspaces").document(name)
+
+    async def claim_workspace(self, name: str, session_id: str, ttl_seconds: float) -> bool:
+        """Atomically take the workspace lease. One live execution per
+        workspace; the holder is the session, so the same session re-claims."""
+        transaction = self._db.transaction()
+        reference = self._workspace(name)
+        firestore = self._firestore
+
+        @firestore.async_transactional
+        async def _claim(transaction):
+            snapshot = await reference.get(transaction=transaction)
+            doc = snapshot.to_dict() if snapshot.exists else None
+            if lease_active(doc) and doc.get("lease_session_id") != session_id:
+                return False
+            fields = {
+                "lease_session_id": session_id,
+                "lease_expires": time.time() + ttl_seconds,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+            if snapshot.exists:
+                transaction.update(reference, fields)
+            else:
+                # A workspace can exist as a bare GCS directory with no doc;
+                # the lease materialises it.
+                transaction.set(reference, {**fields, "created_at": firestore.SERVER_TIMESTAMP})
+            return True
+
+        return await _claim(transaction)
+
+    async def release_workspace(self, name: str, session_id: str) -> None:
+        """Drop the lease, but only if this session still holds it — an
+        expired-and-reclaimed workspace must not be released by the old
+        runner."""
+        transaction = self._db.transaction()
+        reference = self._workspace(name)
+        firestore = self._firestore
+
+        @firestore.async_transactional
+        async def _release(transaction):
+            snapshot = await reference.get(transaction=transaction)
+            if not snapshot.exists or snapshot.to_dict().get("lease_session_id") != session_id:
+                return
+            transaction.update(
+                reference,
+                {
+                    "lease_session_id": None,
+                    "lease_expires": 0.0,
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                },
+            )
+
+        await _release(transaction)
+
+    async def create_workspace(self, name: str, doc: dict[str, Any]) -> None:
+        """Create; the document id is the name, so this fails on a duplicate."""
+        await self._workspace(name).create(
+            {
+                **doc,
+                "created_at": self._firestore.SERVER_TIMESTAMP,
+                "updated_at": self._firestore.SERVER_TIMESTAMP,
+            }
+        )
+
+    async def get_workspace(self, name: str) -> dict[str, Any] | None:
+        snapshot = await self._workspace(name).get()
+        return {"name": name, **snapshot.to_dict()} if snapshot.exists else None
+
+    async def update_workspace(self, name: str, **fields: Any) -> None:
+        fields["updated_at"] = self._firestore.SERVER_TIMESTAMP
+        await self._workspace(name).update(fields)
+
+    async def list_workspaces(self) -> list[dict[str, Any]]:
+        """Every workspace doc, config and lease state together."""
+        return [
+            {"name": s.id, **s.to_dict()} async for s in self._db.collection("workspaces").stream()
+        ]
+
+    async def delete_workspace(self, name: str) -> None:
+        """Remove the workspace doc; no-op when absent. The caller has already
+        deleted the GCS prefix and verified no live lease."""
+        await self._workspace(name).delete()
 
     # --- global settings (the active-policy pointer and version allocator) ---
 

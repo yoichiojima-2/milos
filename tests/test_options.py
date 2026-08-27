@@ -29,7 +29,16 @@ def test_serialize_round_trip():
 
 def test_options_from_doc_rejects_unknown_keys():
     with pytest.raises(OptionsError, match="unknown option"):
-        options_from_doc({"model": "sonnet", "workspace": "dev"})
+        options_from_doc({"model": "sonnet", "artifacts": "reports"})
+
+
+def test_workspace_serializes_and_validates(monkeypatch):
+    monkeypatch.setenv("MILOS_PROJECT", "p1")
+    doc = AgentOptions(workspace="dev").serialize()
+    assert doc["workspace"] == "dev"
+    assert options_from_doc(doc).workspace == "dev"
+    with pytest.raises(OptionsError, match="workspace"):
+        AgentOptions(workspace="Bad Name").validate()
 
 
 def test_local_only_sdk_fields_raise():

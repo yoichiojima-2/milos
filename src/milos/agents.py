@@ -195,18 +195,24 @@ def merge(base: AgentOptions, overrides: AgentOptions) -> AgentOptions:
 async def resolve(store: StoreProtocol, options: AgentOptions) -> AgentOptions:
     """Expand references into concrete options, layered as
 
-        explicit options  <-  agent  <-  settings/global
+        explicit options  <-  agent  <-  workspace options  <-  settings/global
 
     Explicitly-set fields always win over any stored layer. Only the top-level
     options may name an agent — a stored layer naming one is ignored (merge
     never overrides a set field, and nesting would recurse). The model lands
     on "sonnet" when no layer names one, so a session never records no model,
     and the system prompt lands on the harness's own the same way. (An
-    explicit "" is how you ask for no system prompt at all.)"""
+    explicit "" is how you ask for no system prompt at all.) A named workspace
+    without a stored doc contributes no defaults; the shared directory and
+    lease work by name alone."""
     merged = options
     if options.agent:
         agent = await require_agent(store, options.agent)
         merged = merge(options_from_doc(dict(agent.get("options") or {})), merged)
+    if merged.workspace:
+        workspace = await store.get_workspace(merged.workspace)
+        if workspace:
+            merged = merge(options_from_doc(dict(workspace.get("options") or {})), merged)
     settings = await store.get_settings()
     if settings and settings.get("options"):
         merged = merge(options_from_doc(dict(settings.get("options") or {})), merged)

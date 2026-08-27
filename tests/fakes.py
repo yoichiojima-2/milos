@@ -37,6 +37,7 @@ class FakeStore:
         self.events: dict[str, dict[str, dict[str, Any]]] = {}  # sid -> uuid -> event
         self.inbox: dict[str, list[dict[str, Any]]] = {}
         self.approvals: dict[str, dict[str, dict[str, Any]]] = {}
+        self.workspaces: dict[str, dict[str, Any]] = {}
         self.settings: dict[str, Any] | None = None
         self.agents: dict[str, dict[str, Any]] = {}
         self.agent_revisions: dict[str, list[dict[str, Any]]] = {}
@@ -274,6 +275,43 @@ class FakeStore:
         rows = [e for e in self.events.get(session_id, {}).values() if e.get("type") == "tool_call"]
         return [_tool_call_row(e) for e in sorted(rows, key=lambda e: e["ts"])]
 
+    async def claim_workspace(self, name, session_id, ttl_seconds):
+        doc = self.workspaces.get(name)
+        if (
+            doc
+            and float(doc.get("lease_expires") or 0) > time.time()
+            and doc.get("lease_session_id") != session_id
+        ):
+            return False
+        self.workspaces.setdefault(name, {}).update(
+            lease_session_id=session_id,
+            lease_expires=time.time() + ttl_seconds,
+        )
+        return True
+
+    async def release_workspace(self, name, session_id):
+        doc = self.workspaces.get(name)
+        if doc and doc.get("lease_session_id") == session_id:
+            doc.update(lease_session_id=None, lease_expires=0.0)
+
+    async def create_workspace(self, name, doc):
+        if name in self.workspaces:
+            raise ValueError(f"workspace {name} exists")
+        self.workspaces[name] = {**doc, "created_at": time.time(), "updated_at": time.time()}
+
+    async def get_workspace(self, name):
+        doc = self.workspaces.get(name)
+        return {"name": name, **doc} if doc else None
+
+    async def update_workspace(self, name, **fields):
+        self.workspaces[name].update(fields, updated_at=time.time())
+
+    async def list_workspaces(self):
+        return [{"name": k, **v} for k, v in self.workspaces.items()]
+
+    async def delete_workspace(self, name):
+        self.workspaces.pop(name, None)
+
     async def get_settings(self):
         return self.settings
 
@@ -363,3 +401,95 @@ class FakeBucket:
 
     def list(self, prefix: str) -> list[str]:
         return sorted(name for name in self.blobs if name.startswith(prefix))
+
+
+class FakeBlob:
+    """One blob handle over a FakeGcsBucket record ({"data", and "content_type"
+    for string uploads}) — the subset of google.cloud.storage the milos GCS
+    modules (state.py, skills.py) touch."""
+
+    def __init__(self, bucket: "FakeGcsBucket", name: str) -> None:
+        self._bucket = bucket
+        self.name = name
+        self.updated = None
+        # None until the handle is reloaded (which is what a listing does). A
+        # handle that knows a generation reads *that* one, like GCS: the object
+        # being rewritten underneath it is a 404, not a fresh download.
+        self.generation: int | None = None
+
+    @property
+    def size(self) -> int | None:
+        record = self._bucket.objects.get(self.name)
+        return len(record["data"]) if record else None
+
+    def exists(self) -> bool:
+        return self.name in self._bucket.objects
+
+    def reload(self) -> None:
+        self.generation = self._bucket.generations.get(self.name)
+
+    def upload_from_string(self, data: bytes, content_type: str | None = None) -> None:
+        self._bucket.objects[self.name] = {"data": data, "content_type": content_type}
+        self._bucket.bump(self.name)
+
+    def upload_from_filename(self, path) -> None:
+        from pathlib import Path
+
+        self._bucket.objects[self.name] = {"data": Path(path).read_bytes()}
+        self._bucket.bump(self.name)
+
+    def download_as_bytes(self, start: int | None = None, end: int | None = None) -> bytes:
+        data = self._bucket.objects[self.name]["data"]
+        if start is not None or end is not None:
+            # GCS ranges are inclusive of `end`
+            return data[start or 0 : None if end is None else end + 1]
+        return data
+
+    def download_to_filename(self, path) -> None:
+        from pathlib import Path
+
+        from google.api_core.exceptions import NotFound
+
+        current = self._bucket.generations.get(self.name)
+        # GCS opens the destination before it can know the read will fail, so a
+        # 404 leaves an empty file behind. Mirror it: callers have to clean up.
+        Path(path).write_bytes(b"")
+        if current is None or (self.generation is not None and self.generation != current):
+            raise NotFound(f"404 no such object: {self.name}")
+        Path(path).write_bytes(self._bucket.objects[self.name]["data"])
+
+    def delete(self) -> None:
+        del self._bucket.objects[self.name]
+
+
+class FakeListing(list):
+    def __init__(self, blobs, prefixes):
+        super().__init__(blobs)
+        self.prefixes = prefixes
+
+
+class FakeGcsBucket:
+    """In-memory GCS bucket, seedable with {name: data}."""
+
+    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
+        self.objects: dict[str, dict[str, Any]] = {
+            name: {"data": data} for name, data in (objects or {}).items()
+        }
+        # Generations live beside the objects rather than in them, so a rewrite
+        # is visible to a stale handle without changing the record shape tests
+        # compare against.
+        self.generations: dict[str, int] = dict.fromkeys(self.objects, 1)
+
+    def bump(self, name: str) -> None:
+        self.generations[name] = self.generations.get(name, 0) + 1
+
+    def blob(self, name: str) -> FakeBlob:
+        return FakeBlob(self, name)
+
+    def list_blobs(self, prefix: str = "") -> FakeListing:
+        blobs = []
+        for name in sorted(n for n in self.objects if n.startswith(prefix)):
+            blob = FakeBlob(self, name)
+            blob.reload()
+            blobs.append(blob)
+        return FakeListing(blobs, set())
