@@ -108,7 +108,9 @@ async def test_runner_full_turn(env, store, fake_harness):
     assert client.options.env["ANTHROPIC_VERTEX_PROJECT_ID"] == "proj-1"
     assert "HOME" in client.options.env
     assert client.options.hooks and "PreToolUse" in client.options.hooks
-    assert client.options.setting_sources == ["user"]
+    # skills mounted into HOME need user settings; a workspace's CLAUDE.md at
+    # the workspace root needs project settings
+    assert client.options.setting_sources == ["user", "project"]
 
     # thinking_tokens progress events are dropped; everything else is journaled
     events = feed(store)
@@ -418,3 +420,102 @@ async def test_release_with_an_empty_inbox_triggers_nothing(
     await run(SID)
 
     assert no_job_trigger.session_ids == []
+
+
+@pytest.fixture
+def gcs_sync(monkeypatch):
+    """Record every restore/checkpoint as (prefix, root dir name)."""
+    calls = {"restore": [], "checkpoint": [], "exclude": []}
+
+    def record_restore(project, bucket, prefix, root):
+        calls["restore"].append((prefix, root.name))
+        return 0
+
+    def record_checkpoint(project, bucket, prefix, root, exclude=()):
+        calls["checkpoint"].append((prefix, root.name))
+        if exclude:
+            calls["exclude"].append((prefix, exclude))
+        return 0
+
+    monkeypatch.setattr(milos.runner.state, "restore", record_restore)
+    monkeypatch.setattr(milos.runner.state, "checkpoint", record_checkpoint)
+    return calls
+
+
+async def test_runner_syncs_session_prefixes_without_workspace(env, store, fake_harness, gcs_sync):
+    await make_session(store)
+    await store.push_inbox(SID, "message", "go")
+
+    await run(SID)
+
+    checkpointed = [(f"sessions/{SID}/state/ws/", "ws"), (f"sessions/{SID}/state/home/", "home")]
+    assert gcs_sync["restore"] == checkpointed + [("skills/", "skills")]
+    assert gcs_sync["checkpoint"] == checkpointed
+    # skills are mounted from the shared prefix, never checkpointed into home
+    assert gcs_sync["exclude"] == [(f"sessions/{SID}/state/home/", (".claude/skills/",))]
+
+
+async def test_runner_routes_ws_to_shared_workspace(env, store, fake_harness, gcs_sync):
+    await make_session(store, {"workspace": "shared"})
+    await store.push_inbox(SID, "message", "go")
+
+    await run(SID)
+
+    checkpointed = [("workspaces/shared/ws/", "ws"), (f"sessions/{SID}/state/home/", "home")]
+    assert gcs_sync["restore"] == checkpointed + [
+        ("skills/", "skills"),
+        ("workspaces/shared/skills/", "skills"),
+    ]
+    assert gcs_sync["checkpoint"] == checkpointed
+    # claimed during the run, released after
+    assert store.workspaces["shared"]["lease_session_id"] is None
+    assert store.workspaces["shared"]["lease_expires"] == 0.0
+
+
+async def test_runner_fails_fast_when_workspace_busy(env, store, fake_harness, gcs_sync):
+    await make_session(store, {"workspace": "shared"})
+    await store.push_inbox(SID, "message", "go")
+    await store.claim_workspace("shared", "sess_other", 3600)
+
+    await run(SID)
+
+    assert fake_harness == []  # never started the harness
+    assert gcs_sync["restore"] == []
+    session = await store.get_session(SID)
+    assert session["runtime"]["status"] == "idle"
+    assert session["runtime"]["stop_reason"] == "workspace_busy"
+    (doc,) = messages(store)
+    assert doc["kind"] == "result"
+    assert doc["subtype"] == "workspace_busy"
+    assert doc["is_error"] is True
+    # the other session keeps its lease
+    assert store.workspaces["shared"]["lease_session_id"] == "sess_other"
+    # the prompt stays queued for a retry
+    assert [m["consumed"] for m in store.inbox[SID]] == [False]
+
+
+async def test_runner_policy_failure_never_takes_the_workspace_lease(env, store, fake_harness):
+    """A session that cannot prove its rules must not consume the contended
+    resource — the policy loads before the workspace claim, deliberately."""
+    await store.create_session(SID, {"workspace": "shared"})  # no policy stamp
+    await store.push_inbox(SID, "message", "go")
+
+    await run(SID)
+
+    assert (await store.get_session(SID))["runtime"]["stop_reason"] == "policy_error"
+    assert "shared" not in store.workspaces  # never claimed, never materialised
+
+
+async def test_runner_crash_releases_the_workspace_lease(env, store, fake_harness, monkeypatch):
+    def boom(*args):
+        raise RuntimeError("restore died")
+
+    monkeypatch.setattr(milos.runner.state, "restore", boom)
+    await make_session(store, {"workspace": "shared"})
+    await store.push_inbox(SID, "message", "go")
+
+    with pytest.raises(RuntimeError):
+        await run(SID)
+
+    assert store.workspaces["shared"]["lease_session_id"] is None
+    assert (await store.get_session(SID))["runtime"]["stop_reason"] == "error"

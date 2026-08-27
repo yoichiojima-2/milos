@@ -96,21 +96,27 @@ async def _heartbeat(
     store: Store,
     session_id: str,
     lease_id: str,
+    workspace_ref: dict[str, str | None],
     *,
     ttl: float,
     interval: float,
     lost: asyncio.Event,
 ) -> None:
-    """Background task: keep the session lease alive.
+    """Background task: keep the session (and shared workspace) lease alive.
 
     A failed renewal means the lease was stolen or the session was killed —
     set the lost flag so the run stops instead of writing over the new owner.
-    Transient store errors are swallowed: the ttl leaves slack for a retry.
+    workspace_ref["name"] is filled in by run() only once the workspace lease
+    is actually held, so the heartbeat never claims a workspace the run is
+    still allowed to lose to a busy check. Transient store errors are
+    swallowed: the ttl leaves slack for a retry.
     """
     while not lost.is_set():
         await asyncio.sleep(interval)
         try:
             alive = await store.renew_lease(session_id, lease_id, ttl)
+            if alive and workspace_ref.get("name"):
+                alive = await store.claim_workspace(workspace_ref["name"], session_id, ttl)
         except Exception:
             continue
         if not alive:
@@ -181,6 +187,7 @@ async def run(session_id: str) -> None:
             cwd=str(ws),
             model=options.model,
             permission_mode=options.permission_mode,
+            workspace=options.workspace,
             lease_id=lease_id,
             claude_session_id=session.get("claude_session_id"),
             policy_version=session.get("policy_version"),
@@ -193,18 +200,22 @@ async def run(session_id: str) -> None:
     # included: with a short renewable ttl those phases alone can outlive
     # one lease.
     lost = asyncio.Event()
+    leased_workspace: dict[str, str | None] = {"name": None}
     beat = asyncio.create_task(
         _heartbeat(
             store,
             session_id,
             lease_id,
+            leased_workspace,
             ttl=config.lease_ttl,
             interval=config.heartbeat,
             lost=lost,
         )
     )
 
-    async def fail_fast(reason: str, payload: dict, *, result: str | None = None) -> None:
+    async def fail_fast(
+        reason: str, payload: dict, *, result: str | None = None, release_workspace: bool = False
+    ) -> None:
         """Release everything with a zero-cost error result and no agent run."""
         await writer.append("lifecycle", {"event": reason, **payload})
         doc = message_to_doc(
@@ -220,6 +231,8 @@ async def run(session_id: str) -> None:
             )
         )
         await writer.append("message", doc)
+        if release_workspace and options.workspace:
+            await store.release_workspace(options.workspace, session_id)
         await store.release_session(
             session_id,
             status="idle",
@@ -229,20 +242,57 @@ async def run(session_id: str) -> None:
         )
 
     try:
-        # The policy loads before any restore work: a session whose rules
-        # cannot be read fails fast, the same reflex as a missing credential.
+        # The policy loads before any restore work — and before the workspace
+        # claim: a session that cannot prove its rules fails fast without ever
+        # consuming the one contended resource.
         try:
             policy_doc = await _load_pinned_policy(store, session)
         except PolicyError as error:
             await fail_fast("policy_error", {"error": str(error)}, result=str(error))
             return
 
-        ws_prefix = layout.session_prefix(session_id, "ws")
+        if options.workspace and not await store.claim_workspace(
+            options.workspace, session_id, config.lease_ttl
+        ):
+            # Another session is live in this workspace: fail fast with an
+            # error result so the waiting client terminates. The prompt stays
+            # queued in the inbox and is consumed when the session is
+            # re-triggered.
+            await fail_fast("workspace_busy", {"workspace": options.workspace})
+            return
+        if options.workspace:
+            leased_workspace["name"] = options.workspace  # heartbeat renews it from here on
+
+        ws_prefix = (
+            layout.workspace_prefix(options.workspace)
+            if options.workspace
+            else layout.session_prefix(session_id, "ws")
+        )
         home_prefix = layout.session_prefix(session_id, "home")
         ws.mkdir(parents=True, exist_ok=True)
         home.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(state.restore, config.project, config.bucket, ws_prefix, ws)
         await asyncio.to_thread(state.restore, config.project, config.bucket, home_prefix, home)
+        # Skills mount into HOME after the home restore, so the live prefixes
+        # win over anything a stale checkpoint might carry: global skills for
+        # every run, then the workspace's own — restored second, so a
+        # workspace skill shadows a same-named global one. The SDK finds them
+        # via setting_sources=["user"].
+        await asyncio.to_thread(
+            state.restore,
+            config.project,
+            config.bucket,
+            layout.skills_root(),
+            home / ".claude" / "skills",
+        )
+        if options.workspace:
+            await asyncio.to_thread(
+                state.restore,
+                config.project,
+                config.bucket,
+                layout.skills_root(options.workspace),
+                home / ".claude" / "skills",
+            )
 
         # The working directory is restored now, so the context snapshot can
         # carry its git state; read once, not per event.
@@ -271,8 +321,11 @@ async def run(session_id: str) -> None:
             fork_session=fork,
             env={**model_env(options), "HOME": str(home)},
             # "user" settings live in the sandboxed HOME above, so this only
-            # ever loads milos-managed state.
-            setting_sources=["user"],
+            # ever loads milos-managed state — and it is what makes the
+            # mounted ~/.claude/skills visible to the harness. "project" makes
+            # the workspace's CLAUDE.md (restored at the workspace root) load
+            # as the project memory for every session under the workspace.
+            setting_sources=["user", "project"],
             hooks=gate.hooks(),
         )
 
@@ -345,7 +398,24 @@ async def run(session_id: str) -> None:
             return
 
         await asyncio.to_thread(state.checkpoint, config.project, config.bucket, ws_prefix, ws)
-        await asyncio.to_thread(state.checkpoint, config.project, config.bucket, home_prefix, home)
+        # Skills are mounted from the shared skills/ prefixes, not session
+        # state: checkpointing them here would resurrect skills deleted from
+        # the bucket.
+        await asyncio.to_thread(
+            state.checkpoint,
+            config.project,
+            config.bucket,
+            home_prefix,
+            home,
+            (".claude/skills/",),
+        )
+        # The workspace lease drops before the released record: nothing after
+        # this touches the shared directory, and holding the one contended
+        # resource any longer would block a queued sibling session. Detach it
+        # from the heartbeat first, or the next beat re-claims it.
+        if options.workspace:
+            leased_workspace["name"] = None
+            await store.release_workspace(options.workspace, session_id)
         await writer.append("lifecycle", {"event": "released", "stop_reason": stop_reason})
         await store.release_session(
             session_id,
@@ -373,7 +443,10 @@ async def run(session_id: str) -> None:
         # deterministic failure would loop.
         if not lost.is_set():
             try:
-                await fail_fast("error", {"error": repr(error)}, result=repr(error))
+                leased_workspace["name"] = None  # detach, or the next beat re-claims
+                await fail_fast(
+                    "error", {"error": repr(error)}, result=repr(error), release_workspace=True
+                )
             except Exception as nested:
                 # Handling a failure must not replace the original traceback.
                 print(f"failure handling failed for {session_id}: {nested}", file=sys.stderr)
