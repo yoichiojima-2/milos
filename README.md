@@ -153,9 +153,53 @@ milos incidents open sess_... --reason "asked for credentials" --severity high
 An agent is a named, stored run configuration — the persona a session runs as.
 Reference it with `AgentOptions(agent=...)`: stored options become defaults,
 explicit fields override per field. Options resolve at session creation
-(explicit ← agent ← `settings/global` ← the built-in floor: model `"sonnet"`,
-the harness's default prompt) and the merged result is snapshotted onto the
-session, then checked against the policy.
+(explicit ← agent ← workspace ← `settings/global` ← the built-in floor: model
+`"sonnet"`, the harness's default prompt) and the merged result is snapshotted
+onto the session, then checked against the policy.
+
+## Workspaces
+
+A workspace is a shared directory with members: one GCS-backed working
+directory (`workspaces/{name}/ws/`, exclusive lease — one live run at a time,
+a contender fails fast with `stop_reason="workspace_busy"` and its prompt
+stays queued), a `CLAUDE.md` at its root loaded as project memory for every
+run under the workspace, the workspace's own skills, and stored option
+defaults inherited by every session that names it. Members are derived, not
+stored: the agents whose saved options name the workspace.
+
+```
+milos workspaces create dev --model claude-sonnet-5
+milos workspaces claude-md dev --file CLAUDE.md   # print without --file
+milos workspaces                                  # busy/free, members, holder
+```
+
+From the SDK: `AgentOptions(workspace="dev")`. The runner claims the workspace
+lease only after it has loaded the session's pinned policy — a session that
+cannot prove its rules never consumes the contended resource.
+
+## Skills
+
+Sessions carry [Agent Skills](https://code.claude.com/docs/en/skills) — a
+skill is a directory (`SKILL.md` plus resources) under `skills/{name}/` in
+the state bucket, restored into every run's `~/.claude/skills/` at start.
+Two scopes: global (`skills/`, mounted everywhere) and per-workspace
+(`workspaces/{name}/skills/`, mounted for that workspace's sessions,
+shadowing same-named globals). The prefix is the single source of truth:
+checkpoints never write skills back, so a deleted skill stays deleted.
+
+```
+milos skills                          # list skills with descriptions
+milos skills push ./skills/*          # upload local skill directories
+milos skills files pdf                # one skill's files
+milos skills cat pdf SKILL.md         # print one skill file
+milos skills sync                     # seed from the official anthropics/skills repo
+```
+
+`push` names the skill after its directory (`--name` overrides), requires a
+real `SKILL.md` at the root, skips symlinks/oversized files/tooling state,
+merges by default, and prunes with `--replace`. `sync` runs on the operator's
+machine (it fetches github.com), never in the sandbox — the egress allowlist
+is unaffected.
 
 ## Security model
 
@@ -208,11 +252,11 @@ then re-apply. Production checklist: `lock_evidence_retention = true`, decide
 `run.jobsExecutorWithOverrides` on the runner job, read on the state bucket)
 the way you'd scope the project itself.
 
-## Out of scope (v1)
+## Out of scope
 
-Workspaces, workflows/cron, skills, artifact spaces, connectors, a web
-console, BigQuery analytics, evidence signing, continuous journal mirroring —
-each either inherited later from the same architecture (see
+Workflows/cron, artifact spaces, connectors, a web console, BigQuery
+analytics, evidence signing, continuous journal mirroring — each either
+inherited later from the same architecture (see
 [syros](https://github.com/yoichiojima-2/syros), milos's feature-richer
 sibling) or named as future work in the compliance notes.
 

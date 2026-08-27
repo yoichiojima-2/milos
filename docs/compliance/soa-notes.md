@@ -27,7 +27,15 @@ the answers, decided rather than forgotten.
   enforcement needs Secure Web Proxy (always-on cost) in front.
 - **One project = one trust boundary.** No per-team policies, no
   session-to-session isolation inside the state bucket. Tenant separation is
-  project separation.
+  project separation. The same applies to workspaces and skills: the org
+  policy is global — there is no per-workspace policy scoping — and every
+  session mounts the global skills prefix; a workspace's lease serializes
+  access to its directory but is a concurrency control, not an authorization
+  boundary.
+- **`milos skills sync` fetches github.com from the operator's machine**, not
+  the sandbox — the sandbox egress allowlist is unaffected, and synced skills
+  become editable copies with no ongoing supply-chain linkage (re-syncing is
+  an explicit operator action).
 - **Certification is the operator's.** milos supplies technical controls and
   evidence; the ISO 27001 ISMS / ISO 42001 AIMS (scope, risk treatment,
   internal audit, management review, competence records) is the operating

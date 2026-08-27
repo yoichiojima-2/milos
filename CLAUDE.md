@@ -16,9 +16,26 @@ the sandbox.
 - `AgentOptions` (`options.py`) is the serializable subset of
   ClaudeAgentOptions; new serialized fields must be added to
   `_SERIALIZED_FIELDS` or `options_from_doc` rejects them. Options resolve at
-  session creation (`agents.resolve`): explicit ← agent ← `settings/global` ←
-  the floor (model `"sonnet"`, the default-prompt preset); the merged result
-  is policy-checked (`policy.check_session`) and snapshotted onto the session.
+  session creation (`agents.resolve`): explicit ← agent ← workspace ←
+  `settings/global` ← the floor (model `"sonnet"`, the default-prompt preset);
+  the merged result is policy-checked (`policy.check_session`) and snapshotted
+  onto the session.
+- Workspaces (`workspaces.py`, `workspaces/{name}` in Firestore) are shared
+  directories with members: one doc holds stored option defaults AND the
+  exclusive lease; members are derived (agents whose stored options name the
+  workspace), never stored. A workspace's `CLAUDE.md` sits at its
+  shared-directory root and loads as project memory (runner passes
+  `setting_sources=["user", "project"]`). The runner claims the workspace
+  lease only *after* the pinned-policy load — a session that can't prove its
+  rules must not consume the contended lease.
+- `layout.py` is the one map of the GCS bucket — every prefix builder lives
+  there, nowhere else. Everything a workspace owns nests under
+  `workspaces/{name}/`: `ws/` (the shared directory) and `skills/`. Skills
+  have two scopes: `skills/` (global, mounted everywhere) and a workspace's
+  own (mounted for that workspace, shadowing same-named globals). Checkpoints
+  exclude `home/.claude/skills/` — writing them back would resurrect deleted
+  skills. The retention lifecycle rule matches only `sessions/`, so
+  workspaces and skills never expire by rule.
 - **Policies** (`policy.py`, `policies/{vNNNNNN}`) are immutable versions with
   `settings/global.policy_version` as the active pointer — the store has no
   update/delete for them on purpose; the absence of the method is the control.

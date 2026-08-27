@@ -34,6 +34,9 @@ these controls and the evidence exports are inputs.
 | MC-18 | AI incident log: incidents open against a session with reason/severity, appear inline in the transcript, close with a resolution, and export in evidence | `incidents.py`; `milos incidents` | A.5.24–A.5.27 incident management | 42001 incident clauses (10.2, B.6.2.8) |
 | MC-19 | Human-oversight records: every approval decision stores who decided (person via CLI, `sdk` callback, or `timeout`) and when, in the queue and mirrored into the journal | `store.decide_approval`, `gate.can_use_tool`, `remote._relay_approvals` | A.5.3 | B.9.2 |
 | MC-20 | Backups: Firestore point-in-time recovery + weekly backups (14-day retention); delete protection on the database | `infra/main.tf` | A.8.13 information backup | — |
+| MC-21 | Workspace concurrency control: a shared directory admits one live run at a time via a transactional lease; a contender fails fast with a journaled `workspace_busy` record (evidence of the refusal), and the lease is claimed only after the pinned policy loads — an unprovable session never consumes it | `store.claim_workspace`, `runner.run` | A.5.15 access control, A.8.15 | 8.4 |
+| MC-22 | Skills-mount integrity: skills restore from the shared `skills/` prefixes into each run's HOME and are excluded from the home checkpoint, so a session can never persist edits to (or resurrect deletions of) the skills every other session mounts | `runner.run` (checkpoint exclude), `state.checkpoint` | A.8.32 change management | 8.2 |
+| MC-23 | Retention scoping: the state-bucket lifecycle rule expires `sessions/` only — shared workspaces and skills are durable content and never deleted by schedule | `infra/main.tf` lifecycle rules (matches_prefix) | A.8.10 | 8.3 |
 
 ## Operating procedures (documentation controls)
 
