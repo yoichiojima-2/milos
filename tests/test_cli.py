@@ -7,7 +7,7 @@ import milos.cli
 from milos.cli import main
 from milos.policy import canonical_hash, validate_policy
 
-from .fakes import FakeBucket, FakeStore
+from .fakes import FakeBucket, FakeGcsBucket, FakeStore
 
 
 @pytest.fixture
@@ -204,3 +204,90 @@ def test_settings_show_reports_active_policy(store, capsys):
     out = capsys.readouterr().out
     assert "claude-sonnet-5" in out
     assert "active policy: v000001" in out
+
+
+@pytest.fixture
+def gcs(monkeypatch):
+    from milos import state
+
+    fake = FakeGcsBucket()
+    monkeypatch.setattr(state, "_bucket", lambda project, bucket_name: fake)
+    return fake
+
+
+def test_workspaces_create_list_show_delete(store, capsys):
+    run_cli("workspaces", "create", "shared", "--model", "claude-sonnet-5")
+    run_cli("agents", "create", "writer", "--workspace", "shared")
+    capsys.readouterr()
+
+    run_cli("workspaces")
+    out = capsys.readouterr().out
+    assert "shared" in out and "free" in out and "writer" in out
+
+    run_cli("workspaces", "show", "shared")
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["members"] == ["writer"]
+
+    run_cli("workspaces", "delete", "shared")
+    assert store.workspaces == {}
+
+
+def test_workspaces_list_shows_busy_holder(store, capsys):
+    import asyncio
+
+    run_cli("workspaces", "create", "shared")
+    asyncio.run(store.claim_workspace("shared", "sess_1", 60))
+    run_cli("workspaces")
+    out = capsys.readouterr().out
+    assert "busy" in out and "sess_1" in out
+
+
+def test_workspaces_claude_md_round_trip(store, gcs, capsys, tmp_path):
+    source = tmp_path / "CLAUDE.md"
+    source.write_text("# rules\n")
+    run_cli("workspaces", "claude-md", "shared", "--file", str(source))
+    capsys.readouterr()
+    run_cli("workspaces", "claude-md", "shared")
+    assert capsys.readouterr().out == "# rules\n"
+
+
+def test_skills_push_list_files_cat(store, gcs, capsys, tmp_path):
+    path = tmp_path / "pdf"
+    path.mkdir()
+    (path / "SKILL.md").write_bytes(b"---\ndescription: Merge PDFs\n---\n# pdf")
+    (path / "notes.md").write_bytes(b"hi")
+
+    run_cli("skills", "push", str(path))
+    assert "pushed 2 file(s)" in capsys.readouterr().out
+    assert "skills/pdf/SKILL.md" in gcs.objects
+
+    run_cli("skills")
+    out = capsys.readouterr().out
+    assert "pdf" in out and "Merge PDFs" in out
+
+    run_cli("skills", "files", "pdf")
+    out = capsys.readouterr().out
+    assert "SKILL.md" in out and "notes.md" in out
+
+    run_cli("skills", "cat", "pdf", "notes.md")
+    assert capsys.readouterr().out == "hi"
+
+
+def test_skills_sync_rejects_workspace(store):
+    with pytest.raises(SystemExit, match="workspace"):
+        run_cli("skills", "sync", "--workspace", "ws")
+
+
+def test_evidence_includes_workspaces(store, bucket, capsys):
+    import asyncio
+
+    async def seed():
+        await seed_policy(store)
+        await store.create_workspace("shared", {"options": {}})
+
+    asyncio.run(seed())
+    run_cli("evidence", "export", "--from", "2020-01-01", "--to", "2099-01-01")
+    out = capsys.readouterr().out
+    assert "workspaces.jsonl" in out
+    name = next(n for n in bucket.blobs if n.endswith("workspaces.jsonl"))
+    assert b"shared" in bucket.blobs[name]

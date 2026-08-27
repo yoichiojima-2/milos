@@ -12,6 +12,7 @@ evidence bucket:
         approvals.jsonl   the operational approval queue (who decided, when)
         policies.jsonl    every policy version, full content + hash
         agents.jsonl      agent docs with risk blocks + revision history
+        workspaces.jsonl  workspace docs (stored defaults + lease state)
         incidents.jsonl   AI incident records
 
 Integrity is hashes, not signatures (signing is deliberately deferred):
@@ -42,6 +43,7 @@ FILES = (
     "approvals.jsonl",
     "policies.jsonl",
     "agents.jsonl",
+    "workspaces.jsonl",
     "incidents.jsonl",
 )
 
@@ -142,6 +144,7 @@ async def collect(
         "approvals.jsonl": approvals,
         "policies.jsonl": await store.list_policies(),
         "agents.jsonl": agents,
+        "workspaces.jsonl": await store.list_workspaces(),
         "incidents.jsonl": incidents,
     }
 

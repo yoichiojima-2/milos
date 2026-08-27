@@ -19,6 +19,18 @@ milos agents create <name> --system-prompt "..." --allow Read \\
     --risk-purpose "..." --risk-impact low --risk-owner me@x --risk-review-by 2027-01-01
 milos agents show|update|delete <name>
 milos agents revisions <name>           the agent's version history
+milos workspaces                        list workspaces, members, and leases
+milos workspaces create <name> [--model ...] [--description ...]
+milos workspaces show|update|delete <name>
+milos workspaces claude-md <name>       print the workspace's CLAUDE.md
+milos workspaces claude-md <name> --file p  replace it from a local file
+milos skills                            list skills in the bucket
+                                        (--workspace lists a workspace's skills)
+milos skills push <dir...> [--name X] [--replace]
+                                        upload local skill directories (SKILL.md plus resources)
+milos skills files <name>               list one skill's files
+milos skills cat <name> <file>          print one skill file's content
+milos skills sync                       seed skills/ from the official anthropics/skills repo
 milos policies                          list policy versions (active one marked)
 milos policies apply <policy.yaml>      validate + store the next version, activate it
 milos policies show [vNNNNNN]           print one version (default: active)
@@ -86,6 +98,7 @@ def _run_options(args) -> AgentOptions:
         system_prompt=args.system_prompt,
         allowed_tools=list(args.allow or []),
         permission_mode=args.permission_mode,
+        workspace=getattr(args, "workspace", None),
         max_turns=args.max_turns,
         max_budget_usd=args.max_budget_usd,
     )
@@ -304,6 +317,169 @@ async def _agents(args) -> None:
     )
 
 
+async def _workspaces(args) -> None:
+    from . import workspaces
+    from .store import lease_active
+
+    store = _store(args)
+
+    if args.action == "list":
+        agent_docs = await store.list_agents()
+        for doc in sorted(await store.list_workspaces(), key=lambda d: d["name"]):
+            busy = lease_active(doc)
+            holder = doc.get("lease_session_id") if busy else ""
+            opts = doc.get("options") or {}
+            member_names = ",".join(workspaces.members(doc["name"], agent_docs))
+            print(
+                f"{doc['name']:<24}  {'busy' if busy else 'free':<6}"
+                f"  {opts.get('model') or '-':<24}  {member_names or '-':<24}"
+                f"  {holder or doc.get('description') or ''}"
+            )
+        return
+
+    if not args.name:
+        raise SystemExit(f"workspaces {args.action} requires a name")
+
+    if args.action == "claude-md":
+        project = _project(args)
+        bucket = env.default_bucket(None, project)
+        if args.file:
+            from pathlib import Path
+
+            text = Path(args.file).read_text()
+            await asyncio.to_thread(workspaces.write_claude_md, project, bucket, args.name, text)
+            print(f"wrote CLAUDE.md for workspace {args.name}")
+            return
+        text = await asyncio.to_thread(workspaces.read_claude_md, project, bucket, args.name)
+        if text is None:
+            raise SystemExit(f"workspace {args.name} has no CLAUDE.md")
+        print(text, end="")
+        return
+
+    if args.action == "create":
+        workspace = await workspaces.create(
+            args.name,
+            _run_options(args),
+            options=_options(args),
+            description=args.description,
+            created_by=getpass.getuser(),
+            store=store,
+        )
+        print(f"created workspace {workspace['name']}")
+        return
+    if args.action == "update":
+        await workspaces.update(
+            args.name,
+            _run_options(args),
+            options=_options(args),
+            description=args.description,
+            store=store,
+        )
+        print(f"updated workspace {args.name}")
+        return
+    if args.action == "delete":
+        await workspaces.delete(args.name, store=store)
+        print(f"deleted workspace {args.name}")
+        return
+
+    # show
+    workspace = await workspaces.get(args.name, store=store)
+    if workspace is None:
+        raise SystemExit(f"no such workspace: {args.name}")
+    workspace["members"] = workspaces.members(args.name, await store.list_agents())
+    print(json.dumps(workspace, indent=2, default=str))
+
+
+async def _skills(args) -> None:
+    from . import skills
+
+    project = _project(args)
+    bucket = env.default_bucket(None, project)
+
+    if args.action == "sync":
+        if args.workspace:
+            # official skills are global by design, and a global skill already
+            # mounts into every session — a per-workspace copy would be dead weight
+            raise SystemExit(
+                "skills sync seeds the global skills/ prefix; --workspace is not supported"
+            )
+        summary = await asyncio.to_thread(
+            skills.sync_official, project, bucket, max_bytes=skills.MAX_SKILL_FILE_BYTES
+        )
+        print(f"synced {summary['files']} file(s) across {len(summary['skills'])} skill(s)")
+        for skipped in summary["skipped"]:
+            print(f"    skipped {skipped['skill']}/{skipped['file']} ({skipped['size']} bytes)")
+        return
+
+    if args.action == "push":
+        from pathlib import Path
+
+        scope = f" in workspace {args.workspace}" if args.workspace else ""
+        # one directory per skill, so a glob like ./skills/* pushes them all
+        for raw in args.args:
+            try:
+                summary = await asyncio.to_thread(
+                    skills.push,
+                    project,
+                    bucket,
+                    Path(raw),
+                    max_bytes=skills.MAX_SKILL_FILE_BYTES,
+                    name=args.name,
+                    workspace=args.workspace,
+                    replace=args.replace,
+                )
+            except (OSError, ValueError) as exc:
+                raise SystemExit(str(exc)) from exc
+            pruned = f", pruned {summary['deleted']}" if summary["deleted"] else ""
+            print(f"pushed {summary['files']} file(s) to skill {summary['skill']}{scope}{pruned}")
+            for skipped in summary["skipped"]:
+                why = skipped.get("reason") or f"{skipped['size']} bytes"
+                print(f"    skipped {skipped['file']} ({why})")
+        return
+
+    if args.action == "files":
+        if not args.args:
+            raise SystemExit("usage: milos skills files <name>")
+        rows = await asyncio.to_thread(skills.files, project, bucket, args.args[0], args.workspace)
+        if not rows:
+            raise SystemExit(f"no such skill: {args.args[0]}")
+        for row in rows:
+            updated = row["updated"].strftime("%Y-%m-%d %H:%M") if row["updated"] else ""
+            print(f"{row['name']}  {row['size']}  {updated}")
+        return
+
+    if args.action == "cat":
+        if len(args.args) < 2:
+            raise SystemExit("usage: milos skills cat <name> <file>")
+        import sys
+
+        try:
+            data, _content_type = await asyncio.to_thread(
+                skills.read_file,
+                project,
+                bucket,
+                args.args[0],
+                args.args[1],
+                max_bytes=skills.MAX_SKILL_FILE_BYTES,
+                workspace=args.workspace,
+            )
+        except FileNotFoundError as exc:
+            raise SystemExit(f"not found: {exc}") from exc
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        sys.stdout.buffer.write(data)
+        return
+
+    # list
+    rows = await asyncio.to_thread(skills.stats, project, bucket, args.workspace)
+    if args.workspace and not rows:
+        print(f"workspace {args.workspace} has no skills")
+        return
+    for name in sorted(rows):
+        row = rows[name]
+        print(f"{name:<28}  {row['files']:>4} files  {row['description'] or ''}")
+
+
 async def _policies(args) -> None:
     from .policy import canonical_hash, policy_from_yaml
 
@@ -460,6 +636,7 @@ def _run_option_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--system-prompt", default=None)
     parser.add_argument("--allow", action="append", metavar="TOOL", help="repeatable")
     parser.add_argument("--permission-mode", default=None)
+    parser.add_argument("--workspace", default=None)
     parser.add_argument("--max-turns", type=int, default=None)
     parser.add_argument("--max-budget-usd", type=float, default=None)
 
@@ -531,6 +708,36 @@ def main() -> None:
     _risk_flags(agents)
     agents.set_defaults(func=_agents)
 
+    workspaces = sub.add_parser("workspaces")
+    workspaces.add_argument(
+        "action",
+        nargs="?",
+        default="list",
+        choices=["list", "create", "show", "update", "delete", "claude-md"],
+    )
+    workspaces.add_argument("name", nargs="?")
+    workspaces.add_argument("--description", default=None)
+    workspaces.add_argument("--file", default=None, help="claude-md: local file to upload")
+    _run_option_flags(workspaces)
+    workspaces.set_defaults(func=_workspaces)
+
+    skills = sub.add_parser("skills")
+    skills.add_argument(
+        "action", nargs="?", default="list", choices=["list", "push", "files", "cat", "sync"]
+    )
+    skills.add_argument("args", nargs="*")
+    skills.add_argument("--workspace", default=None, help="operate on a workspace's skills")
+    skills.add_argument(
+        "--name", default=None, help="push: skill name (default: the directory's basename)"
+    )
+    skills.add_argument(
+        "--replace",
+        action="store_true",
+        help="push: after uploading, delete bucket files the directory no longer "
+        "carries (files skipped for size are kept)",
+    )
+    skills.set_defaults(func=_skills)
+
     policies = sub.add_parser("policies", help="org policy versions — apply/show/diff")
     policies.add_argument(
         "action", nargs="?", default="list", choices=["list", "apply", "show", "diff"]
@@ -562,6 +769,11 @@ def main() -> None:
     args = parser.parse_args()
     if getattr(args, "action", None) in ("allow", "deny") and not getattr(args, "call_hash", None):
         parser.error("allow/deny require a call_hash")
+    if args.command == "skills" and args.action == "push":
+        if not args.args:
+            parser.error("push requires a skill directory")
+        if args.name and len(args.args) > 1:
+            parser.error("--name names one skill, so it takes a single directory")
     try:
         asyncio.run(args.func(args))
     except KeyboardInterrupt:
