@@ -74,8 +74,10 @@ resource "google_logging_project_sink" "audit" {
   unique_writer_identity = true
 }
 
-# The sink writes with its own service identity; grant it into the bucket.
+# Same-project log-bucket sinks need no writer grant (the API returns no
+# writer identity for them); the grant only exists for the cross-project case.
 resource "google_project_iam_member" "audit_sink_writer" {
+  count   = google_logging_project_sink.audit.writer_identity != null && google_logging_project_sink.audit.writer_identity != "" ? 1 : 0
   project = var.project
   role    = "roles/logging.bucketWriter"
   member  = google_logging_project_sink.audit.writer_identity
