@@ -228,19 +228,25 @@ is unaffected.
 
 ## Deploy
 
+From the repo root:
+
 ```sh
+# 0. Set once; every step below reads these. MILOS_PROJECT is also the env var
+#    the client and CLI read at runtime.
+export MILOS_PROJECT=your-project
+export MILOS_IMAGE=asia-northeast1-docker.pkg.dev/$MILOS_PROJECT/milos/runner:latest
+
 # 1. Infrastructure (KMS, Firestore, buckets, audit logs, job, service account)
-cd infra
-gcloud storage buckets create gs://YOUR_PROJECT-tfstate --versioning
-terraform init -backend-config="bucket=YOUR_PROJECT-tfstate"
-terraform apply -var project=YOUR_PROJECT \
-  -var image=asia-northeast1-docker.pkg.dev/YOUR_PROJECT/milos/runner:latest
+gcloud storage buckets create gs://$MILOS_PROJECT-tfstate \
+  --project $MILOS_PROJECT --location asia-northeast1
+gcloud storage buckets update gs://$MILOS_PROJECT-tfstate --versioning
+terraform -chdir=infra init -backend-config="bucket=$MILOS_PROJECT-tfstate"
+terraform -chdir=infra apply -var project=$MILOS_PROJECT -var image=$MILOS_IMAGE
 
 # 2. Runner image
-gcloud builds submit --tag asia-northeast1-docker.pkg.dev/YOUR_PROJECT/milos/runner:latest .
+gcloud builds submit --project $MILOS_PROJECT --tag $MILOS_IMAGE .
 
 # 3. Apply a policy (nothing runs without one), then smoke test
-export MILOS_PROJECT=YOUR_PROJECT
 milos policies apply docs/compliance/policy.example.yaml
 milos run "hello"
 ```
