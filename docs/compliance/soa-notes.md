@@ -1,50 +1,13 @@
 # Statement-of-applicability notes — what milos does NOT claim
 
-The honest half of [controls.md](controls.md). An auditor will ask; these are
-the answers, decided rather than forgotten.
+The honest half of [controls.md](controls.md). An auditor will ask; these are the answers, decided rather than forgotten.
 
-- **No customer-managed encryption keys (CMEK).** All stores (Firestore, the
-  state bucket, the evidence bucket) rely on Google-managed default encryption
-  at rest. CMEK was removed from scope: Firestore CMEK requires a per-project
-  Google allowlist, and key custody added operational risk (a scheduled key
-  destruction makes every store unreadable) without changing the actual
-  threat model — Google holds the keys either way at this deployment's trust
-  level. A.8.24 is satisfied by default encryption; deployments that need
-  customer key custody must add CMEK back themselves.
-- **No cryptographic signing of evidence.** Bundles are integrity-protected
-  by sha256 manifests plus the bucket's (lockable) retention policy —
-  tamper-*evident* against modification in place, and tamper-*proof* only as
-  far as the retention lock reaches. KMS asymmetric signing of manifests is
-  named future work, not a shipped control.
-- **No continuous journal mirroring.** Firestore is the working copy; records
-  there are protected against overwrite (doc id == uuid) and against the
-  sandbox (no delete grants) but a project owner can delete documents between
-  exports. The documented procedure — monthly `milos evidence export` — bounds
-  that exposure to the export cadence. Deployments needing a tighter bound
-  should export more often.
-- **Access Transparency / Access Approval** (visibility into Google-personnel
-  access) are org-level GCP features gated on support tier; milos neither
-  configures nor claims them.
-- **The sandbox agent is the runner service account.** The agent has a shell,
-  so IAM — not tool-level checks — is the boundary; tool checks are
-  ergonomics. What IAM denies (the evidence bucket, all secrets by default)
-  is the guarantee; anything the runner identity can do, a prompt-injected
-  agent can do.
-- **FQDN egress rules are DNS-based.** With `egress_control = true`, hosts
-  sharing an allowed domain's IPs (same CDN edge) are not blocked; SNI-level
-  enforcement needs Secure Web Proxy (always-on cost) in front.
-- **One project = one trust boundary.** No per-team policies, no
-  session-to-session isolation inside the state bucket. Tenant separation is
-  project separation. The same applies to workspaces and skills: the org
-  policy is global — there is no per-workspace policy scoping — and every
-  session mounts the global skills prefix; a workspace's lease serializes
-  access to its directory but is a concurrency control, not an authorization
-  boundary.
-- **`milos skills sync` fetches github.com from the operator's machine**, not
-  the sandbox — the sandbox egress allowlist is unaffected, and synced skills
-  become editable copies with no ongoing supply-chain linkage (re-syncing is
-  an explicit operator action).
-- **Certification is the operator's.** milos supplies technical controls and
-  evidence; the ISO 27001 ISMS / ISO 42001 AIMS (scope, risk treatment,
-  internal audit, management review, competence records) is the operating
-  organization's management system.
+- **No customer-managed encryption keys (CMEK).** All stores (Firestore, the state bucket, the evidence bucket) rely on Google-managed default encryption at rest. CMEK was removed from scope: Firestore CMEK requires a per-project Google allowlist, and key custody added operational risk (a scheduled key destruction makes every store unreadable) without changing the actual threat model — Google holds the keys either way at this deployment's trust level. A.8.24 is satisfied by default encryption; deployments that need customer key custody must add CMEK back themselves.
+- **No cryptographic signing of evidence.** Bundles are integrity-protected by sha256 manifests plus the bucket's (lockable) retention policy — tamper-*evident* against modification in place, and tamper-*proof* only as far as the retention lock reaches. KMS asymmetric signing of manifests is named future work, not a shipped control.
+- **No continuous journal mirroring.** Firestore is the working copy; records there are protected against overwrite (doc id == uuid) and against the sandbox (no delete grants) but a project owner can delete documents between exports. The documented procedure — monthly `milos evidence export` — bounds that exposure to the export cadence. Deployments needing a tighter bound should export more often.
+- **Access Transparency / Access Approval** (visibility into Google-personnel access) are org-level GCP features gated on support tier; milos neither configures nor claims them.
+- **The sandbox agent is the runner service account.** The agent has a shell, so IAM — not tool-level checks — is the boundary; tool checks are ergonomics. What IAM denies (the evidence bucket, all secrets by default) is the guarantee; anything the runner identity can do, a prompt-injected agent can do.
+- **FQDN egress rules are DNS-based.** With `egress_control = true`, hosts sharing an allowed domain's IPs (same CDN edge) are not blocked; SNI-level enforcement needs Secure Web Proxy (always-on cost) in front.
+- **One project = one trust boundary.** No per-team policies, no session-to-session isolation inside the state bucket. Tenant separation is project separation. The same applies to workspaces and skills: the org policy is global — there is no per-workspace policy scoping — and every session mounts the global skills prefix; a workspace's lease serializes access to its directory but is a concurrency control, not an authorization boundary.
+- **`milos skills sync` fetches github.com from the operator's machine**, not the sandbox — the sandbox egress allowlist is unaffected, and synced skills become editable copies with no ongoing supply-chain linkage (re-syncing is an explicit operator action).
+- **Certification is the operator's.** milos supplies technical controls and evidence; the ISO 27001 ISMS / ISO 42001 AIMS (scope, risk treatment, internal audit, management review, competence records) is the operating organization's management system.

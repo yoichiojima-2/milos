@@ -289,15 +289,18 @@ def test_push_skips_a_name_with_no_utf8_encoding(tmp_path, capture_writes):
     assert [s["reason"] for s in summary["skipped"]] == ["the bucket rejects the name"]
 
 
-def test_push_skips_names_the_bucket_would_refuse(tmp_path, capture_writes):
+def test_push_skips_names_the_bucket_would_refuse(tmp_path, capture_writes, monkeypatch):
     """validate_file allows what GCS does not, and the upload loop would have
     written earlier files by the time the API rejected one. Skipped, not fatal:
     the bucket could never hold the name, so refusing the push preserves
-    nothing and would make the whole directory unpushable."""
+    nothing and would make the whole directory unpushable. A real 1024-byte
+    object name would need a path deeper than macOS's PATH_MAX allows, so the
+    limit is lowered instead of the tree deepened."""
     path = make_skill_dir(tmp_path, files={"ok.md": b"hi"})
     (path / "bad\nname.md").write_bytes(b"nope")
-    deep = path.joinpath(*[chr(ord("d") + n) * 200 for n in range(6)])
-    deep.mkdir(parents=True)
+    monkeypatch.setattr(skills, "MAX_OBJECT_NAME_BYTES", 64)
+    deep = path / ("d" * 60)
+    deep.mkdir()
     (deep / "over.md").write_bytes(b"nope")
 
     summary = skills.push("p", "b", path, max_bytes=1024)

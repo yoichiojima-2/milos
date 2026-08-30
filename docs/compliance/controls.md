@@ -1,16 +1,8 @@
 # Control-to-clause mapping
 
-What milos enforces, where each control lives (code path, Terraform resource,
-or documented procedure), and which ISO 27001:2022 Annex A control and ISO/IEC
-42001:2023 clause it supports. This file is itself a documentation control:
-it is versioned in git, and the honest scope statement — what milos does *not*
-claim — is in [soa-notes.md](soa-notes.md).
+What milos enforces, where each control lives (code path, Terraform resource, or documented procedure), and which ISO 27001:2022 Annex A control and ISO/IEC 42001:2023 clause it supports. This file is itself a documentation control: it is versioned in git, and the honest scope statement — what milos does *not* claim — is in [soa-notes.md](soa-notes.md).
 
-"Partially qualifying" means exactly this: milos implements and evidences the
-technical controls below. An ISO certification also needs the management
-system around them (scope statements, risk treatment, internal audit,
-management review) — that is the operating organization's work, for which
-these controls and the evidence exports are inputs.
+"Partially qualifying" means exactly this: milos implements and evidences the technical controls below. An ISO certification also needs the management system around them (scope statements, risk treatment, internal audit, management review) — that is the operating organization's work, for which these controls and the evidence exports are inputs.
 
 | id | control | mechanism | ISO 27001 Annex A | ISO 42001 |
 |---|---|---|---|---|
@@ -40,17 +32,9 @@ these controls and the evidence exports are inputs.
 
 ## Operating procedures (documentation controls)
 
-These are procedures the operating organization runs; milos makes them
-one-command each:
+These are procedures the operating organization runs; milos makes them one-command each:
 
-- **Monthly evidence export** — `milos evidence export --from <first> --to
-  <last>`; the locked bucket then holds the record. Continuous mirroring is
-  deliberately not built (see soa-notes.md).
-- **Retention run** — `milos sessions purge --older-than <policy days>`
-  scheduled alongside the bucket lifecycle rules (which need no scheduling).
-- **Agent review** — `milos agents` lists `REVIEW OVERDUE` entries; the owner
-  named in the risk block re-assesses and updates (which archives a revision).
-- **Production checklist** — set `lock_evidence_retention = true`, decide
-  `egress_control`, keep `model_backends: [vertex]` unless the Anthropic path
-  was consciously accepted, and scope project IAM as you would scope the
-  trust boundary itself.
+- **Monthly evidence export** — `milos evidence export --from <first> --to <last>`; the locked bucket then holds the record. Continuous mirroring is deliberately not built (see soa-notes.md).
+- **Retention run** — `milos sessions purge --older-than <policy days>` scheduled alongside the bucket lifecycle rules (which need no scheduling).
+- **Agent review** — `milos agents` lists `REVIEW OVERDUE` entries; the owner named in the risk block re-assesses and updates (which archives a revision).
+- **Production checklist** — set `lock_evidence_retention = true`, decide `egress_control`, keep `model_backends: [vertex]` unless the Anthropic path was consciously accepted, and scope project IAM as you would scope the trust boundary itself.
