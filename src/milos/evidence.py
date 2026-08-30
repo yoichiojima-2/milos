@@ -18,7 +18,7 @@ evidence bucket:
 Integrity is hashes, not signatures (signing is deliberately deferred):
 `bundle_hash` is a sha256 over the per-file sha256s, and `milos evidence
 verify` recomputes everything — an auditor can re-run it. Immutability is the
-bucket's, not Firestore's: the evidence bucket is versioned, CMEK-encrypted,
+bucket's, not Firestore's: the evidence bucket is versioned,
 and carries a lockable retention policy (infra/evidence.tf), so a bundle, once
 written, cannot be altered or deleted until retention expires. Firestore is
 the working copy; the locked bucket is the record.

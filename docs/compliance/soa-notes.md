@@ -3,6 +3,14 @@
 The honest half of [controls.md](controls.md). An auditor will ask; these are
 the answers, decided rather than forgotten.
 
+- **No customer-managed encryption keys (CMEK).** All stores (Firestore, the
+  state bucket, the evidence bucket) rely on Google-managed default encryption
+  at rest. CMEK was removed from scope: Firestore CMEK requires a per-project
+  Google allowlist, and key custody added operational risk (a scheduled key
+  destruction makes every store unreadable) without changing the actual
+  threat model — Google holds the keys either way at this deployment's trust
+  level. A.8.24 is satisfied by default encryption; deployments that need
+  customer key custody must add CMEK back themselves.
 - **No cryptographic signing of evidence.** Bundles are integrity-protected
   by sha256 manifests plus the bucket's (lockable) retention policy —
   tamper-*evident* against modification in place, and tamper-*proof* only as

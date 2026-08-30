@@ -1,14 +1,17 @@
 # --- access logging: the "who read what" layer app code cannot provide ---
 # (ISO 27001 A.8.15.) milos's journal records what agents did; Cloud Audit
 # Logs record what *people and service accounts* did to the stores themselves
-# — reads of Firestore documents, GCS objects, and KMS key operations. Data
+# — reads of Firestore documents and GCS objects. Data
 # Access logs are off by default in GCP; this turns them on for exactly the
 # services holding milos data and routes them to a bucket with its own
 # retention.
 
+# Firestore's audit logging is configured under the legacy Datastore service
+# name; "firestore.googleapis.com" is rejected for audit config. Log entries
+# still arrive with serviceName firestore.googleapis.com in native mode.
 resource "google_project_iam_audit_config" "firestore" {
   project = var.project
-  service = "firestore.googleapis.com"
+  service = "datastore.googleapis.com"
 
   audit_log_config {
     log_type = "ADMIN_READ"
@@ -24,21 +27,6 @@ resource "google_project_iam_audit_config" "firestore" {
 resource "google_project_iam_audit_config" "storage" {
   project = var.project
   service = "storage.googleapis.com"
-
-  audit_log_config {
-    log_type = "ADMIN_READ"
-  }
-  audit_log_config {
-    log_type = "DATA_READ"
-  }
-  audit_log_config {
-    log_type = "DATA_WRITE"
-  }
-}
-
-resource "google_project_iam_audit_config" "kms" {
-  project = var.project
-  service = "cloudkms.googleapis.com"
 
   audit_log_config {
     log_type = "ADMIN_READ"
@@ -68,7 +56,7 @@ resource "google_logging_project_sink" "audit" {
 
   filter = <<-EOT
     logName:("cloudaudit.googleapis.com%2Factivity" OR "cloudaudit.googleapis.com%2Fdata_access")
-    AND protoPayload.serviceName=("firestore.googleapis.com" OR "storage.googleapis.com" OR "cloudkms.googleapis.com" OR "run.googleapis.com")
+    AND protoPayload.serviceName=("firestore.googleapis.com" OR "datastore.googleapis.com" OR "storage.googleapis.com" OR "run.googleapis.com")
   EOT
 
   unique_writer_identity = true

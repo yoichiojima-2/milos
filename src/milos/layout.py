@@ -8,7 +8,7 @@ State bucket ({project}-milos):
     workspaces/{name}/skills/{skill}/  the workspace's own skills
     skills/{skill}/                    global skills, mounted into every run
 
-Evidence bucket ({project}-milos-evidence — versioned, CMEK, lockable
+Evidence bucket ({project}-milos-evidence — versioned, lockable
 retention; see infra/evidence.tf):
 
     exports/{export_id}/         one evidence bundle (manifest.json + *.jsonl)

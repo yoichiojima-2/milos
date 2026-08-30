@@ -8,7 +8,7 @@ variable "region" {
 }
 
 variable "firestore_location" {
-  description = "Firestore location. Keep it a single region (data residency); it must match the KMS keyring's location for CMEK."
+  description = "Firestore location. Keep it a single region (data residency)."
   type        = string
   default     = "asia-northeast1"
 }
@@ -56,13 +56,7 @@ variable "model_backend" {
   }
 }
 
-# --- data protection (ISO 27001 A.8.24 cryptography, A.8.10 deletion) ---
-
-variable "kms_rotation_period" {
-  description = "Automatic rotation period for the CMEK keys"
-  type        = string
-  default     = "7776000s" # 90 days
-}
+# --- data protection (ISO 27001 A.8.10 deletion) ---
 
 variable "session_state_retention_days" {
   description = "Days after which session state objects (sessions/*/state/) are deleted from the state bucket by lifecycle rule. The source of truth for the retention schedule — mirror it in the milos policy's retention.session_state_days so evidence and enforcement agree. The Firestore half is `milos sessions purge`."
@@ -83,7 +77,7 @@ variable "lock_evidence_retention" {
 }
 
 variable "audit_log_retention_days" {
-  description = "Retention of the dedicated audit logging bucket (Data Access logs for Firestore/GCS/KMS — the 'who read what' record app code cannot produce)"
+  description = "Retention of the dedicated audit logging bucket (Data Access logs for Firestore/GCS — the 'who read what' record app code cannot produce)"
   type        = number
   default     = 365
 }

@@ -40,7 +40,6 @@ resource "google_project_service" "apis" {
     "storage.googleapis.com",
     "iam.googleapis.com",
     "secretmanager.googleapis.com",
-    "cloudkms.googleapis.com",
     "logging.googleapis.com",
     # for egress_control (enabled unconditionally: toggling the for_each set
     # on a flag churns every service resource, and disable_on_destroy=false
@@ -53,7 +52,8 @@ resource "google_project_service" "apis" {
 }
 
 # --- state: Firestore (control plane) + GCS (per-session state) ---
-# Both CMEK-encrypted (kms.tf) and pinned to one region (data residency).
+# Both pinned to one region (data residency). Encryption is Google-managed —
+# CMEK is deliberately out of scope (docs/compliance/soa-notes.md).
 
 resource "google_firestore_database" "default" {
   name                              = "(default)"
@@ -62,14 +62,7 @@ resource "google_firestore_database" "default" {
   delete_protection_state           = "DELETE_PROTECTION_ENABLED"
   point_in_time_recovery_enablement = "POINT_IN_TIME_RECOVERY_ENABLED"
 
-  cmek_config {
-    kms_key_name = google_kms_crypto_key.data.id
-  }
-
-  depends_on = [
-    google_project_service.apis,
-    google_kms_crypto_key_iam_member.firestore_data,
-  ]
+  depends_on = [google_project_service.apis]
 }
 
 # Firestore is the only copy of the control plane (GCS holds per-session blobs,
@@ -158,10 +151,6 @@ resource "google_storage_bucket" "state" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
 
-  encryption {
-    default_kms_key_name = google_kms_crypto_key.data.id
-  }
-
   versioning {
     enabled = true
   }
@@ -191,10 +180,7 @@ resource "google_storage_bucket" "state" {
     }
   }
 
-  depends_on = [
-    google_project_service.apis,
-    google_kms_crypto_key_iam_member.gcs_data,
-  ]
+  depends_on = [google_project_service.apis]
 }
 
 resource "google_artifact_registry_repository" "milos" {

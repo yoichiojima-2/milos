@@ -3,7 +3,7 @@
 Secure agent platform on GCP, built to partially qualify for ISO 27001/42001:
 client SDK + sandbox runner in one Python package (`src/milos/`), Terraform in
 `infra/`, compliance docs in `docs/compliance/`. Firestore is the control
-plane, GCS (CMEK) holds session state and evidence bundles, Cloud Run Jobs run
+plane, GCS holds session state and evidence bundles, Cloud Run Jobs run
 the sandbox.
 
 ## Commands
@@ -50,7 +50,7 @@ the sandbox.
   that rules were in force. Audit rows are committed **before** the tool runs
   (`gate._pre_tool_use`).
 - **Evidence** (`evidence.py`) exports JSONL bundles + a hashed manifest to
-  the evidence bucket (`infra/evidence.tf`: versioned, CMEK, lockable
+  the evidence bucket (`infra/evidence.tf`: versioned, lockable
   retention; the runner identity has no grant on it — keep it that way).
   `verify` re-hashes; auditors run it.
 - Agents (`agents.py`) carry a `risk` block (required when the policy sets

@@ -12,9 +12,9 @@ approval, and the whole record exports as a hashed, auditor-verifiable
 The idea is to add as little as possible on top of what already exists.
 `claude_agent_sdk` provides the harness (loop, tools, permissions, sessions,
 resume); GCP managed services cover the control plane and the compliance
-substrate: Firestore holds session state and the journal, GCS (CMEK, versioned,
+substrate: Firestore holds session state and the journal, GCS (versioned,
 retention-locked) holds workspaces and evidence, Cloud Run Jobs are the
-sandbox, KMS is the key custody, Cloud Audit Logs are the who-read-what layer,
+sandbox, Cloud Audit Logs are the who-read-what layer,
 IAM is auth. milos is one Python package and one Terraform module — no servers,
 no REST API, roughly zero always-on cost.
 
@@ -115,7 +115,7 @@ their risk blocks and revision history, and incidents — each file sha256'd
 into a manifest with one bundle hash. `verify` re-computes everything; an
 auditor can run it with read access alone.
 
-The evidence bucket is versioned, CMEK-encrypted, and under a retention policy
+The evidence bucket is versioned and under a retention policy
 (lockable: `lock_evidence_retention = true` makes bundles undeletable by
 anyone, project owners included, until retention expires). The sandbox
 identity holds no grant on it at all. Firestore is the working copy; the
@@ -219,7 +219,7 @@ is unaffected.
 - **Approvals fail closed** — gated calls block until decided; timeout is an
   explicit recorded deny.
 - **Kill switch** — `milos kill` flips `disabled`; checked on every tool call.
-- **Access logging** — Data Access audit logs on Firestore/GCS/KMS route to a
+- **Access logging** — Data Access audit logs on Firestore/GCS route to a
   retained logging bucket: who read what, independent of application code.
 - **Network egress** — `terraform apply -var egress_control=true` puts the
   sandbox behind a default-deny VPC with an FQDN allowlist and Private Google
@@ -236,7 +236,7 @@ From the repo root:
 export MILOS_PROJECT=your-project
 export MILOS_IMAGE=asia-northeast1-docker.pkg.dev/$MILOS_PROJECT/milos/runner:latest
 
-# 1. Infrastructure (KMS, Firestore, buckets, audit logs, job, service account)
+# 1. Infrastructure (Firestore, buckets, audit logs, job, service account)
 gcloud storage buckets create gs://$MILOS_PROJECT-tfstate \
   --project $MILOS_PROJECT --location asia-northeast1
 gcloud storage buckets update gs://$MILOS_PROJECT-tfstate --versioning
