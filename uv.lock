@@ -7,6 +7,15 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "annotated-doc"
+version = "0.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/8e/38aa427ed5402449e226975b649c5dc73ccadfefeb95e6aecb8f8ea4b6b6/annotated_doc-0.0.5.tar.gz", hash = "sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb", size = 10758, upload-time = "2026-07-28T13:50:58.129Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/30/e900b21425a860e195f32e37657aa1f7c7f2b1bfb26f03ca209b90933c06/annotated_doc-0.0.5-py3-none-any.whl", hash = "sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101", size = 5302, upload-time = "2026-07-28T13:50:57.239Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -321,6 +330,22 @@ wheels = [
 ]
 
 [[package]]
+name = "fastapi"
+version = "0.141.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8a/02/91e3416a8fdd715abb903a952a6bec7cdd8d14eed55d415fc8595524c319/fastapi-0.141.1.tar.gz", hash = "sha256:e8822fc40db1e1858054d7a949a888695bc9bdce70139178e33bd2871a453ca1", size = 425799, upload-time = "2026-07-29T17:18:05.568Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/03/10388a42375ee7e4ac9b94eb2c5c569c8b5795e377e701c9ac3ad63de890/fastapi-0.141.1-py3-none-any.whl", hash = "sha256:bfb91aa2d334c61cb35ba9a116fc123b3d3df31640b801cf57a7a78ec3f603b3", size = 131954, upload-time = "2026-07-29T17:18:04.364Z" },
+]
+
+[[package]]
 name = "google-api-core"
 version = "2.34.0"
 source = { registry = "https://pypi.org/simple" }
@@ -356,6 +381,35 @@ wheels = [
 ]
 
 [[package]]
+name = "google-cloud-appengine-logging"
+version = "1.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7f/b9/fcafc8d2dc68975a65cdff74807547cff9b2a7b00e738d3f5ff0bd112867/google_cloud_appengine_logging-1.10.0.tar.gz", hash = "sha256:b5563e76010a36e6adf1cc489620c29ee4fb3b986b006d237e9a061eb0f0abb7", size = 17744, upload-time = "2026-06-03T14:52:40.298Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a5/b3/4eeb9f59c4e7e07e1f08704b6508249eea5760878810014e636026300416/google_cloud_appengine_logging-1.10.0-py3-none-any.whl", hash = "sha256:193675caaf062c41688a3e2c744b73614db82408bc7fb060353b6878d7134492", size = 18143, upload-time = "2026-06-03T14:51:55.174Z" },
+]
+
+[[package]]
+name = "google-cloud-audit-log"
+version = "0.6.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "googleapis-common-protos" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/69/91/e2a4ed95e790564b807a61fd54d90aa6bf2d3a9474bc5197651acf0cad13/google_cloud_audit_log-0.6.2.tar.gz", hash = "sha256:ea5dc892b1858d345aef0c5563a728534fa875bd0388765391574d3c57fd8f0e", size = 41010, upload-time = "2026-08-25T19:18:29.397Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7d/f3/f24fba2cb01ad41615d55335306642e3ddf3a5c3cdda6b44754d37bd650e/google_cloud_audit_log-0.6.2-py3-none-any.whl", hash = "sha256:1f19bdf2586cfdb72054eec769ede153a037988b73a7d3b6d266f672ab426c00", size = 40382, upload-time = "2026-08-24T21:55:11.849Z" },
+]
+
+[[package]]
 name = "google-cloud-core"
 version = "2.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -383,6 +437,27 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/fa/e0/e63f6389903fded5c8fd60f464f0e0c443d1a9f4d447165ce8a88bd3a8d7/google_cloud_firestore-2.29.0.tar.gz", hash = "sha256:605a8463959da450531b09b60d4093c427d063e8880a38ed36f9bc02adc8ab99", size = 655284, upload-time = "2026-08-25T19:18:51.747Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4e/a6/e7e2c1d83eda1bc022c50b4ed100782134348352b7fe43bf1a4721261d62/google_cloud_firestore-2.29.0-py3-none-any.whl", hash = "sha256:dd4e686610090a918da29f7e97a7f0cc6cb9e9b98c7d06b86471df45048cad2b", size = 432144, upload-time = "2026-08-24T21:55:36.901Z" },
+]
+
+[[package]]
+name = "google-cloud-logging"
+version = "3.16.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "google-cloud-appengine-logging" },
+    { name = "google-cloud-audit-log" },
+    { name = "google-cloud-core" },
+    { name = "grpc-google-iam-v1" },
+    { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/61/08/73f21dd94c7da7c2580dd179fdaebf72b74f2ea06d9812924dfd57d6d765/google_cloud_logging-3.16.3.tar.gz", hash = "sha256:5d7924bbb33c066bb43f70d33ba66749ff1c29b207de4c80b2bce1aacd53f676", size = 294772, upload-time = "2026-08-25T19:18:54.693Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7a/0f/f741092958bbb063ccc8ee13e9d2db8c7abedf6208de10ae699ce3cf4bc7/google_cloud_logging-3.16.3-py3-none-any.whl", hash = "sha256:6275384f21d4b142d25731de3107de38408e807742290a9939e19ea68de8c283", size = 233851, upload-time = "2026-08-24T21:55:40.182Z" },
 ]
 
 [[package]]
@@ -535,6 +610,19 @@ wheels = [
 ]
 
 [[package]]
+name = "httpcore"
+version = "1.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "h11" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8", size = 85484, upload-time = "2025-04-24T22:06:22.219Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55", size = 78784, upload-time = "2025-04-24T22:06:20.566Z" },
+]
+
+[[package]]
 name = "httpcore2"
 version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -545,6 +633,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/be/ad/f4f0e57345f1870f3e8cb624e058d7eca6e5a27d33bcc3311d9b618734cd/httpcore2-2.12.0.tar.gz", hash = "sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648", size = 67548, upload-time = "2026-08-18T13:22:08.211Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/74/d370e55600d9bcfa0d9794b0166126d49291a3d2b20c268fc98c453a4948/httpcore2-2.12.0-py3-none-any.whl", hash = "sha256:7e04258ce01013d7d615e5b910a3b27fac937d7a95038227e79652b4ba3b4ceb", size = 83074, upload-time = "2026-08-18T13:22:05.854Z" },
+]
+
+[[package]]
+name = "httpx"
+version = "0.28.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "certifi" },
+    { name = "httpcore" },
+    { name = "idna" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc", size = 141406, upload-time = "2024-12-06T15:37:23.222Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517, upload-time = "2024-12-06T15:37:21.509Z" },
 ]
 
 [[package]]
@@ -657,14 +760,21 @@ wheels = [
 
 [[package]]
 name = "milos"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
+    { name = "fastapi" },
+    { name = "google-auth" },
     { name = "google-cloud-firestore" },
+    { name = "google-cloud-logging" },
     { name = "google-cloud-run" },
     { name = "google-cloud-storage" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -677,10 +787,17 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "google-auth", specifier = ">=2.35" },
     { name = "google-cloud-firestore", specifier = ">=2.19" },
+    { name = "google-cloud-logging", specifier = ">=3.11" },
     { name = "google-cloud-run", specifier = ">=0.10" },
     { name = "google-cloud-storage", specifier = ">=2.18" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "mcp", specifier = ">=1.10" },
+    { name = "pydantic", specifier = ">=2.9" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [package.metadata.requires-dev]

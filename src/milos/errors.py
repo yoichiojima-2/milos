@@ -1,24 +1,39 @@
-"""milos exceptions."""
-
-from __future__ import annotations
+"""Errors raised by the platform. The API maps each to one HTTP status."""
 
 
 class MilosError(Exception):
-    """Base class for all milos errors."""
+    status = 500
 
 
-class OptionsError(MilosError):
-    """An AgentOptions value is invalid or unsupported in the sandbox."""
+class NotFound(MilosError):
+    status = 404
 
 
-class PolicyError(MilosError):
-    """A policy document is invalid, missing, or refuses the requested run."""
+class AlreadyExists(MilosError):
+    """A create-only document already exists (permission, approval, session)."""
+
+    status = 409
 
 
-class SessionExists(MilosError):
-    """A session document with that id is already there — the loser's half of a
-    create race, which a caller holding a pre-assigned id may want to tolerate."""
+class Conflict(MilosError):
+    """Same idempotency key, different content."""
+
+    status = 409
 
 
-class SessionTerminated(MilosError):
-    """The remote session is terminated and cannot accept further input."""
+class Forbidden(MilosError):
+    status = 403
+
+
+class Unauthorized(MilosError):
+    status = 401
+
+
+class Invalid(MilosError):
+    status = 422
+
+
+class Stopped(MilosError):
+    """The agent is disabled or the session is terminated; no further permissions."""
+
+    status = 409

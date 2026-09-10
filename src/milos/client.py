@@ -1,95 +1,117 @@
-"""Entry points: query() and MilosClient — the claude_agent_sdk-shaped surface."""
+"""Client for the public API, used by the CLI and by scripts.
+
+Callers authenticate to IAP with a Google identity token
+(`gcloud auth print-identity-token --audiences <iap-client-id>`); IAP verifies
+it and the API reads the resulting assertion. Pass the token explicitly or set
+`MILOS_ID_TOKEN`.
+"""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+import asyncio
+import os
+import secrets
+import subprocess
+from collections.abc import AsyncIterator
 from typing import Any
 
-from .errors import MilosError
-from .journal import MAIN_BRANCH
-from .options import AgentOptions
-from .types import Message
+import httpx
+
+from .models import Event, Session
 
 
-async def query(
-    *,
-    prompt: str | AsyncIterable[dict[str, Any]],
-    options: AgentOptions | None = None,
-) -> AsyncIterator[Message]:
-    """One-shot query, mirroring claude_agent_sdk.query().
-
-    The harness runs in the project's Cloud Run sandbox under the active
-    policy, and the same message types stream back through Firestore.
-    """
-    from .remote import run_remote
-
-    options = options or AgentOptions()
-    options.validate()
-    async for message in run_remote(prompt, options):
-        yield message
+def id_token(audience: str | None = None) -> str:
+    token = os.environ.get("MILOS_ID_TOKEN")
+    if token:
+        return token
+    cmd = ["gcloud", "auth", "print-identity-token"]
+    if audience:
+        cmd.append(f"--audiences={audience}")
+    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
 
 
-class MilosClient:
-    """Multi-turn client mirroring ClaudeSDKClient: connect / query /
-    receive_response / interrupt / disconnect, as an async context manager.
-
-    The conversation is a durable session driven through the Firestore control
-    plane: disconnect() only drops the connection (the session scales to zero
-    and can be resumed later); terminate() ends it for good.
-    """
-
-    def __init__(self, options: AgentOptions | None = None) -> None:
-        self.options = options or AgentOptions()
-        self._store: Any = None  # pre-set store (tests) survives connect()
-        self._cursor = 0
-        self._branch = MAIN_BRANCH
-        self.session_id: str | None = None
-
-    async def connect(self) -> None:
-        from . import remote
-        from .store import Store
-
-        self.options.validate()
-        self._store = self._store or Store(self.options.resolved_project())
-        self.session_id, self._branch, self._cursor = await remote.attach_session(
-            self._store, self.options
+class Client:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        token: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._http = httpx.AsyncClient(
+            base_url=base_url.rstrip("/"), headers=headers, transport=transport, timeout=30
         )
 
-    def _connected(self) -> str:
-        if self.session_id is None:
-            raise MilosError("not connected — call connect() first")
-        return self.session_id
+    async def _call(self, method: str, path: str, **kwargs: Any) -> Any:
+        response = await self._http.request(method, f"/v1{path}", **kwargs)
+        if response.status_code >= 400:
+            detail = response.json().get("detail", response.text) if response.content else ""
+            raise RuntimeError(f"{response.status_code}: {detail}")
+        return response.json()
 
-    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
-        from . import remote
+    async def agents(self) -> list[dict[str, Any]]:
+        return await self._call("GET", "/agents")
 
-        await remote.send_prompt(self._store, self._connected(), self.options, prompt)
+    async def create_session(
+        self,
+        agent_id: str,
+        message: str,
+        *,
+        client_request_id: str | None = None,
+        approvers: list[str] | None = None,
+        viewers: list[str] | None = None,
+    ) -> Session:
+        body = {
+            "agent_id": agent_id,
+            "message": message,
+            "client_request_id": client_request_id or secrets.token_hex(8),
+            "approvers": approvers or [],
+            "viewers": viewers or [],
+        }
+        return Session(**await self._call("POST", "/sessions", json=body))
 
-    async def receive_response(self) -> AsyncIterator[Message]:
-        from . import remote
+    async def sessions(self) -> list[Session]:
+        return [Session(**s) for s in await self._call("GET", "/sessions")]
 
-        async for seq, message in remote.stream_response(
-            self._store, self._connected(), self.options, self._branch, self._cursor
-        ):
-            self._cursor = seq
-            yield message
+    async def session(self, session_id: str) -> Session:
+        return Session(**await self._call("GET", f"/sessions/{session_id}"))
 
-    async def interrupt(self) -> None:
-        session_id = self._connected()
-        await self._store.push_inbox(session_id, "interrupt")
+    async def events(self, session_id: str, *, after: int = 0) -> list[Event]:
+        data = await self._call("GET", f"/sessions/{session_id}/events", params={"after": after})
+        return [Event(**e) for e in data]
 
-    async def terminate(self) -> None:
-        """End the session for good: kill switch + terminated status."""
-        session_id = self._connected()
-        await self._store.update_session(session_id, status="terminated", disabled=True)
+    async def send(
+        self, session_id: str, text: str, *, client_request_id: str | None = None
+    ) -> Event:
+        body = {"text": text, "client_request_id": client_request_id or secrets.token_hex(8)}
+        return Event(**await self._call("POST", f"/sessions/{session_id}/messages", json=body))
 
-    async def disconnect(self) -> None:
-        # The session stays durable; forgetting where we were is enough.
-        self.session_id, self._branch, self._cursor = None, MAIN_BRANCH, 0
+    async def interrupt(self, session_id: str) -> Event:
+        body = {"client_request_id": secrets.token_hex(8)}
+        return Event(**await self._call("POST", f"/sessions/{session_id}/interrupt", json=body))
 
-    async def __aenter__(self) -> MilosClient:
-        await self.connect()
-        return self
+    async def confirm(self, session_id: str, tool_use_id: str, decision: str) -> dict[str, Any]:
+        body = {"tool_use_id": tool_use_id, "decision": decision}
+        return await self._call("POST", f"/sessions/{session_id}/approvals", json=body)
 
-    async def __aexit__(self, *exc: Any) -> None:
-        await self.disconnect()
+    async def terminate(self, session_id: str) -> Session:
+        return Session(**await self._call("POST", f"/sessions/{session_id}/terminate"))
+
+    async def follow(
+        self, session_id: str, *, after: int = 0, interval: float = 2.0
+    ) -> AsyncIterator[Event]:
+        """Yield events as they appear; stops when the session is idle or terminated."""
+        while True:
+            events = await self.events(session_id, after=after)
+            for event in events:
+                after = event.seq
+                yield event
+            if not events:
+                session = await self.session(session_id)
+                if session.status.value in ("idle", "terminated"):
+                    return
+                await asyncio.sleep(interval)
+
+    async def close(self) -> None:
+        await self._http.aclose()

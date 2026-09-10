@@ -1,17 +1,24 @@
 [project]
 name = "milos"
-version = "0.1.0"
-description = "Run claude-agent-sdk agents securely on your own GCP project, with policy-as-code, audited tool calls, and exportable compliance evidence"
+version = "0.2.0"
+description = "Secure agent platform on Google Cloud: an API that owns every state change, sandboxed Cloud Run runners, human approval for irreversible tools, and an append-only journal"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
     "claude-agent-sdk>=0.2",
+    "fastapi>=0.115",
+    "google-auth>=2.35",
     "google-cloud-firestore>=2.19",
-    "google-cloud-storage>=2.18",
+    "google-cloud-logging>=3.11",
     "google-cloud-run>=0.10",
+    "google-cloud-storage>=2.18",
+    "httpx>=0.27",
+    "mcp>=1.10",
+    "pydantic>=2.9",
     "pyyaml>=6.0",
+    "uvicorn>=0.30",
 ]
 
 [dependency-groups]
@@ -35,7 +42,8 @@ packages = ["src/milos"]
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
+select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["tests"]
