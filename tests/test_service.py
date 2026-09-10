@@ -24,7 +24,7 @@ async def test_create_session_writes_first_event_and_launches(service, session, 
     launched = jobs.launched[0]
     assert launched["env"]["MILOS_LEASE_TOKEN"] == session.lease.token
     assert launched["env"]["MILOS_SESSION_TOKEN"].startswith(session.session_id + ".")
-    assert launched["runner_sa"].startswith("runner-analyst@")
+    assert launched["agent_id"] == "analyst"
     assert "MILOS_API_URL" in launched["env"]
 
 

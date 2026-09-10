@@ -126,8 +126,8 @@ class FakeJobs:
     def __init__(self) -> None:
         self.launched: list[dict[str, Any]] = []
 
-    async def launch(self, session_id: str, *, env: dict[str, str], runner_sa: str) -> str:
-        self.launched.append({"session_id": session_id, "env": env, "runner_sa": runner_sa})
+    async def launch(self, session_id: str, *, agent_id: str, env: dict[str, str]) -> str:
+        self.launched.append({"session_id": session_id, "agent_id": agent_id, "env": env})
         return f"exec-{len(self.launched)}"
 
 

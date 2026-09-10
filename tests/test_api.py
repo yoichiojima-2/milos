@@ -158,13 +158,13 @@ async def test_connector_permission_check(internal, service, session, tokens):
 
 
 async def test_scheduler_creates_idempotent_sessions(internal, agent, jobs):
-    body = {
-        "agent_id": "analyst",
-        "message": "weekly",
-        "client_request_id": "weekly:2026-09-14T00:00",
+    body = {"agent_id": "analyst", "message": "weekly"}
+    headers = {
+        "X-CloudScheduler-JobName": "weekly",
+        "X-CloudScheduler-ScheduleTime": "2026-09-14T00:00:00+09:00",
     }
-    first = await internal.post("/internal/sessions", json=body)
-    second = await internal.post("/internal/sessions", json=body)
+    first = await internal.post("/internal/sessions", json=body, headers=headers)
+    second = await internal.post("/internal/sessions", json=body, headers=headers)
     assert first.status_code == 201 and first.json()["session_id"] == second.json()["session_id"]
     assert first.json()["operator"] == "scheduler"
     assert len(jobs.launched) == 1

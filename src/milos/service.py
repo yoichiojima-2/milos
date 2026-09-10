@@ -771,10 +771,6 @@ class Service:
 
     async def _launch(self, session: Session) -> None:
         assert session.lease is not None
-        version_doc = await self.store.get(
-            f"agents/{session.agent_id}/versions/{session.agent_version}"
-        )
-        version = AgentVersion(**version_doc)
         env = {
             **self.runner_env,
             "MILOS_SESSION_ID": session.session_id,
@@ -782,7 +778,7 @@ class Service:
             "MILOS_LEASE_TOKEN": session.lease.token,
             "MILOS_RUNNER_ID": session.lease.runner_id,
         }
-        await self.jobs.launch(session.session_id, env=env, runner_sa=version.runner_sa)
+        await self.jobs.launch(session.session_id, agent_id=session.agent_id, env=env)
 
     def _append(
         self,

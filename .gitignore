@@ -9,3 +9,5 @@ dist/
 .terraform.lock.hcl
 terraform.tfstate*
 .env
+
+infra/**/terraform.tfvars

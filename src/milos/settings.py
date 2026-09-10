@@ -25,7 +25,7 @@ class ApiSettings:
     role: str  # "public" (behind IAP) or "internal" (runner, scheduler, connector)
     token_key: str
     iap_audience: str | None
-    runner_job: str
+    runner_job_prefix: str  # jobs are named <prefix>-<agent_id>
     internal_url: str  # what runners are told to call
     snapshot_bucket: str
     connector_urls: dict[str, str] = field(default_factory=dict)
@@ -40,7 +40,7 @@ class ApiSettings:
             role=_env("MILOS_API_ROLE", "public"),
             token_key=_env("MILOS_TOKEN_KEY"),
             iap_audience=os.environ.get("MILOS_IAP_AUDIENCE"),
-            runner_job=_env("MILOS_RUNNER_JOB", "milos-runner"),
+            runner_job_prefix=_env("MILOS_RUNNER_JOB_PREFIX", "milos-runner"),
             internal_url=_env("MILOS_INTERNAL_URL", ""),
             snapshot_bucket=_env("MILOS_SNAPSHOT_BUCKET", ""),
             connector_urls=json.loads(os.environ.get("MILOS_CONNECTOR_URLS", "{}")),

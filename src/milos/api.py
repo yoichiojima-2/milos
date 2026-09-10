@@ -242,13 +242,20 @@ def _internal(service: Service, *, tokens: SessionTokens):
     Lease = Annotated[str, Header(alias="X-Milos-Lease")]
 
     @router.post("/sessions", status_code=201)
-    async def scheduled_session(body: CreateSession) -> dict[str, Any]:
-        """Cloud Scheduler: create a session with the schedule's idempotency key."""
+    async def scheduled_session(
+        body: CreateSession,
+        job: Annotated[str | None, Header(alias="X-CloudScheduler-JobName")] = None,
+        scheduled_at: Annotated[str | None, Header(alias="X-CloudScheduler-ScheduleTime")] = None,
+    ) -> dict[str, Any]:
+        """Cloud Scheduler: one session per scheduled time, however often it retries."""
+        client_request_id = (
+            f"{job}:{scheduled_at}" if job and scheduled_at else body.client_request_id
+        )
         session = await service.create_session(
             body.agent_id,
             body.message,
             operator=SCHEDULER_ACTOR,
-            client_request_id=body.client_request_id,
+            client_request_id=client_request_id,
             viewers=body.viewers,
             approvers=body.approvers,
         )
@@ -329,7 +336,7 @@ def build_from_env() -> FastAPI:
     jobs = (
         NoJobs()
         if settings.dev_user
-        else CloudRunJobs(settings.project, settings.region, settings.runner_job)
+        else CloudRunJobs(settings.project, settings.region, settings.runner_job_prefix)
     )
     service = Service(
         FirestoreStore(project=settings.project),

@@ -166,33 +166,33 @@ class Run:
     async def __call__(self) -> StopReason:
         context = await self.control.context()
         session, version = context.session, context.version
-        self.work_dir.mkdir(parents=True, exist_ok=True)
-        manifest = None
-        if self.blobs and session.snapshot:
-            manifest = await restore(
-                self.blobs,
-                session.session_id,
-                session.snapshot,
-                work_dir=self.work_dir,
-                transcripts=self.transcripts,
-            )
-        resume = (manifest or {}).get("sdk_session_id")
-        options = build_options(
-            version,
-            self.settings,
-            self.gate,
-            resume=resume,
-            connector_headers=await self._connector_headers(version.get("connectors", [])),
-        )
-        stop_reason = StopReason.END_TURN
+        stop_reason = StopReason.NEEDS_ATTENTION
         try:
+            self.work_dir.mkdir(parents=True, exist_ok=True)
+            manifest = None
+            if self.blobs and session.snapshot:
+                manifest = await restore(
+                    self.blobs,
+                    session.session_id,
+                    session.snapshot,
+                    work_dir=self.work_dir,
+                    transcripts=self.transcripts,
+                )
+            options = build_options(
+                version,
+                self.settings,
+                self.gate,
+                resume=(manifest or {}).get("sdk_session_id"),
+                connector_headers=await self._connector_headers(version.get("connectors", [])),
+            )
             async with self.client_factory(options) as client:
                 self.gate.client = client
                 stop_reason = await self._loop(client)
         except Exception as error:
             print(f"run failed: {error}", file=sys.stderr)
-            stop_reason = StopReason.NEEDS_ATTENTION
         finally:
+            # Every exit path releases the lease, crashes included. A snapshot
+            # is attempted first; if it fails the previous one stays current.
             with contextlib.suppress(Exception):
                 await self._snapshot(session.session_id, session.snapshot + 1)
             await self.control.finish(stop_reason)

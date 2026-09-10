@@ -1,0 +1,31 @@
+folder_id       = "123456789012"
+billing_account = "0158ED-XXXXXX-XXXXXX"
+region          = "asia-northeast1"
+vertex_region   = "us-east5"
+
+# Built and pushed by CI; the first apply needs a placeholder that exists.
+image = "asia-northeast1-docker.pkg.dev/milos-runtime-dev/milos/milos:latest"
+
+agent_ids   = ["analyst"]
+users_group = "agent-users@example.com"
+
+# IAP assertion audience for the public Cloud Run service. Confirm on the
+# first deploy (docs/operations.md, "First deploy").
+iap_audience = "/projects/000000000000/locations/asia-northeast1/services/milos-api-public"
+
+allowed_fqdns  = ["api.notion.com"]
+egress_secrets = { notion-token = "NOTION_TOKEN" }
+
+schedules = {
+  weekly-numbers = {
+    agent_id  = "analyst"
+    message   = "Summarise last week's numbers."
+    cron      = "0 9 * * 1"
+    approvers = ["lead@example.com"]
+  }
+}
+
+alert_email = "owner@example.com"
+
+# access_policy_id = "987654321"
+# perimeter_admins = ["group:da-gcp-admin@example.com"]
