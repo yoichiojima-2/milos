@@ -109,11 +109,7 @@ class Service:
 
         async def tx_fn(tx: Transaction) -> AgentVersion:
             existing = await tx.get(f"agents/{version.agent_id}")
-            agent = (
-                Agent(**existing)
-                if existing
-                else Agent(agent_id=version.agent_id, latest_version=0)
-            )
+            agent = Agent(**existing) if existing else Agent(agent_id=version.agent_id, latest_version=0)
             published = version.model_copy(update={"version": agent.latest_version + 1})
             tx.create(f"agents/{version.agent_id}/versions/{published.version}", published.doc())
             tx.set(
@@ -228,9 +224,7 @@ class Service:
             await self._launch(session)
         return session
 
-    async def accept_message(
-        self, session_id: str, text: str, *, actor: str, client_request_id: str
-    ) -> Event:
+    async def accept_message(self, session_id: str, text: str, *, actor: str, client_request_id: str) -> Event:
         return await self._accept_user_event(
             session_id,
             EventType.USER_MESSAGE,
@@ -293,9 +287,7 @@ class Service:
             await self._launch(to_launch)
         return event
 
-    async def confirm(
-        self, session_id: str, tool_use_id: str, decision: Literal["allow", "deny"], *, actor: str
-    ) -> Approval:
+    async def confirm(self, session_id: str, tool_use_id: str, decision: Literal["allow", "deny"], *, actor: str) -> Approval:
         now = self.now()
 
         async def tx_fn(tx: Transaction) -> tuple[Approval, Session]:
@@ -351,9 +343,7 @@ class Service:
 
     async def list_sessions(self, *, operator: str | None = None, limit: int = 50) -> list[Session]:
         where = [("operator", "==", operator)] if operator else []
-        docs = await self.store.query(
-            "sessions", where=where, order_by="created_at", descending=True, limit=limit
-        )
+        docs = await self.store.query("sessions", where=where, order_by="created_at", descending=True, limit=limit)
         return [Session(**d) for d in docs]
 
     async def events(self, session_id: str, *, after: int = 0, limit: int = 500) -> list[Event]:
@@ -387,9 +377,7 @@ class Service:
             self._check_lease(session, lease_token)
             agent = await self._agent(tx, session.agent_id)
             version = await self._version(tx, session.agent_id, session.agent_version)
-            decision = await self._decide(
-                tx, session, agent, version, tool_use_id, tool_name, args_sha256
-            )
+            decision = await self._decide(tx, session, agent, version, tool_use_id, tool_name, args_sha256)
             event = self._event(
                 EventType.AGENT_TOOL_USE,
                 actor=RUNNER_ACTOR,
@@ -426,15 +414,9 @@ class Service:
             }
         )
         if decision.kind == "allow":
-            await self.store.transaction(
-                lambda tx: self._grant(
-                    tx, session_id, lease_token, decision, tool_name, args_sha256
-                )
-            )
+            await self.store.transaction(lambda tx: self._grant(tx, session_id, lease_token, decision, tool_name, args_sha256))
         elif decision.kind == "require_confirmation":
-            await self.store.transaction(
-                lambda tx: self._park(tx, session_id, lease_token, tool_use_id, version)
-            )
+            await self.store.transaction(lambda tx: self._park(tx, session_id, lease_token, tool_use_id, version))
         return decision
 
     async def poll(self, session_id: str, *, lease_token: str) -> Poll:
@@ -466,9 +448,7 @@ class Service:
 
         await self.store.transaction(tx_fn)
 
-    async def report(
-        self, session_id: str, events: list[RunnerEvent], *, lease_token: str
-    ) -> list[Event]:
+    async def report(self, session_id: str, events: list[RunnerEvent], *, lease_token: str) -> list[Event]:
         for item in events:
             if item.type not in (
                 EventType.AGENT_MESSAGE,
@@ -482,12 +462,7 @@ class Service:
         async def tx_fn(tx: Transaction) -> list[Event]:
             session = await self._session(tx, session_id)
             self._check_lease(session, lease_token)
-            built = [
-                self._event(
-                    e.type, actor=RUNNER_ACTOR, tool_use_id=e.tool_use_id, payload=e.payload
-                )
-                for e in events
-            ]
+            built = [self._event(e.type, actor=RUNNER_ACTOR, tool_use_id=e.tool_use_id, payload=e.payload) for e in events]
             self._append(tx, session, built)
             return built
 
@@ -503,9 +478,7 @@ class Service:
 
         await self.store.transaction(tx_fn)
 
-    async def finish(
-        self, session_id: str, *, lease_token: str, stop_reason: StopReason
-    ) -> Session:
+    async def finish(self, session_id: str, *, lease_token: str, stop_reason: StopReason) -> Session:
         """Release the lease. Input that arrived during shutdown starts a fresh run."""
 
         async def tx_fn(tx: Transaction) -> tuple[Session, bool]:
@@ -533,18 +506,14 @@ class Service:
                 "stop_reason": stop_reason.value,
                 "lease": None,
             }
-            return self._append(
-                tx, session, [self._status_event(SessionStatus.IDLE, stop_reason)], updates
-            ), False
+            return self._append(tx, session, [self._status_event(SessionStatus.IDLE, stop_reason)], updates), False
 
         session, relaunch = await self.store.transaction(tx_fn)
         if relaunch:
             await self._launch(session)
         return session
 
-    async def permission(
-        self, session_id: str, *, tool_name: str, args_sha256: str
-    ) -> Permission | None:
+    async def permission(self, session_id: str, *, tool_name: str, args_sha256: str) -> Permission | None:
         """Connector check: the newest permission for this exact call under the current lease."""
         session = await self.get_session(session_id)
         if not session.lease:
@@ -578,9 +547,7 @@ class Service:
 
         active = await self.store.query(
             "sessions",
-            where=[
-                ("status", "in", [SessionStatus.RUNNING.value, SessionStatus.RESCHEDULING.value])
-            ],
+            where=[("status", "in", [SessionStatus.RUNNING.value, SessionStatus.RESCHEDULING.value])],
         )
         for doc in active:
             session = Session(**doc)
@@ -631,9 +598,7 @@ class Service:
                     "stop_reason": StopReason.NEEDS_ATTENTION.value,
                     "lease": None,
                 }
-                event = self._status_event(
-                    SessionStatus.IDLE, StopReason.NEEDS_ATTENTION, actor=INSPECTOR_ACTOR
-                )
+                event = self._status_event(SessionStatus.IDLE, StopReason.NEEDS_ATTENTION, actor=INSPECTOR_ACTOR)
                 return self._append(tx, session, [event], updates), "attention"
             updates = self._new_run(session, status=SessionStatus.RESCHEDULING)
             event = self._status_event(SessionStatus.RESCHEDULING, None, actor=INSPECTOR_ACTOR)
@@ -682,9 +647,7 @@ class Service:
                 limit=1,
             )
             if not consumed:
-                return Decision(
-                    "allow", f"approved by {newest.decided_by}", tool_use_id, newest.tool_use_id
-                )
+                return Decision("allow", f"approved by {newest.decided_by}", tool_use_id, newest.tool_use_id)
         return Decision("require_confirmation", f"{tool_name} requires human approval", tool_use_id)
 
     async def _grant(
@@ -740,9 +703,7 @@ class Service:
         event = self._status_event(SessionStatus.IDLE, StopReason.REQUIRES_ACTION)
         self._append(tx, session, [event], updates)
 
-    async def _record_confirmation(
-        self, tx: Transaction, session: Session, approval: Approval
-    ) -> Session:
+    async def _record_confirmation(self, tx: Transaction, session: Session, approval: Approval) -> Session:
         pending = [t for t in session.pending_tool_use_ids if t != approval.tool_use_id]
         events = [
             self._event(
@@ -763,9 +724,7 @@ class Service:
             events.append(self._status_event(SessionStatus.RUNNING, None))
         return self._append(tx, session, events, updates)
 
-    def _new_run(
-        self, session: Session, status: SessionStatus = SessionStatus.RUNNING
-    ) -> dict[str, Any]:
+    def _new_run(self, session: Session, status: SessionStatus = SessionStatus.RUNNING) -> dict[str, Any]:
         lease = Lease(runner_id=uuid.uuid4().hex, token=new_token(), last_poll_at=self.now())
         return {"status": status.value, "stop_reason": None, "lease": lease.doc()}
 
@@ -825,9 +784,7 @@ class Service:
             **fields,
         )
 
-    def _status_event(
-        self, status: SessionStatus, stop_reason: StopReason | None, *, actor: str = "api"
-    ) -> Event:
+    def _status_event(self, status: SessionStatus, stop_reason: StopReason | None, *, actor: str = "api") -> Event:
         return self._event(
             EventType.SESSION_STATUS,
             actor=actor,

@@ -70,9 +70,7 @@ class Gate:
         # this hook only ever receives PreToolUse input.
         return {"PreToolUse": [HookMatcher(matcher=None, hooks=[cast(Any, self.pre_tool_use)])]}
 
-    async def pre_tool_use(
-        self, input_data: dict[str, Any], tool_use_id: str | None, _: Any
-    ) -> dict[str, Any]:
+    async def pre_tool_use(self, input_data: dict[str, Any], tool_use_id: str | None, _: Any) -> dict[str, Any]:
         tool_name = input_data.get("tool_name", "")
         args = input_data.get("tool_input") or {}
         tool_use_id = tool_use_id or sha256_text(f"{tool_name}:{args}")[:24]
@@ -251,13 +249,9 @@ class Run:
             await client.query(prompt)
             async for message in client.receive_response():
                 if isinstance(message, AssistantMessage):
-                    text = "\n".join(
-                        b.text for b in message.content if isinstance(b, TextBlock) and b.text
-                    )
+                    text = "\n".join(b.text for b in message.content if isinstance(b, TextBlock) and b.text)
                     if text:
-                        await self.control.report(
-                            [RunnerEvent(EventType.AGENT_MESSAGE, {"text": text})]
-                        )
+                        await self.control.report([RunnerEvent(EventType.AGENT_MESSAGE, {"text": text})])
                 elif isinstance(message, UserMessage) and isinstance(message.content, list):
                     results = [
                         RunnerEvent(
@@ -359,15 +353,9 @@ async def main() -> int:
         lease_token=settings.lease_token,
         identity=identity,
     )
-    blobs = (
-        GcsBlobs(settings.snapshot_bucket, project=settings.project)
-        if settings.snapshot_bucket
-        else None
-    )
+    blobs = GcsBlobs(settings.snapshot_bucket, project=settings.project) if settings.snapshot_bucket else None
     try:
-        reason = await Run(
-            settings, control, blobs=blobs, client_factory=ClaudeSDKClient, identity=identity
-        )()
+        reason = await Run(settings, control, blobs=blobs, client_factory=ClaudeSDKClient, identity=identity)()
     finally:
         await control.close()
     return 0 if reason != StopReason.NEEDS_ATTENTION else 1

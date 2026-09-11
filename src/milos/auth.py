@@ -43,9 +43,7 @@ class CloudIdentityDirectory:
         import google.auth
         from google.auth.transport.requests import AuthorizedSession
 
-        credentials, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-identity.groups.readonly"]
-        )
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-identity.groups.readonly"])
         self._session = AuthorizedSession(credentials)  # type: ignore[no-untyped-call]
 
     async def is_member(self, email: str, group: str) -> bool:

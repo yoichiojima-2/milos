@@ -67,9 +67,7 @@ async def save(
     await blobs.put(prefix(session_id, number) + "manifest.json", json.dumps(manifest).encode())
 
 
-async def restore(
-    blobs: Blobs, session_id: str, number: int, *, work_dir: Path, transcripts: Path
-) -> dict[str, Any] | None:
+async def restore(blobs: Blobs, session_id: str, number: int, *, work_dir: Path, transcripts: Path) -> dict[str, Any] | None:
     """Unpack snapshot `number`; returns its manifest, or None when it does not exist."""
     raw = await blobs.get(prefix(session_id, number) + "manifest.json")
     archive = await blobs.get(prefix(session_id, number) + "state.tar.gz")

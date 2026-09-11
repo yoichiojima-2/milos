@@ -39,9 +39,7 @@ class Client:
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        self._http = httpx.AsyncClient(
-            base_url=base_url.rstrip("/"), headers=headers, transport=transport, timeout=30
-        )
+        self._http = httpx.AsyncClient(base_url=base_url.rstrip("/"), headers=headers, transport=transport, timeout=30)
 
     async def _call(self, method: str, path: str, **kwargs: Any) -> Any:
         response = await self._http.request(method, f"/v1{path}", **kwargs)
@@ -82,9 +80,7 @@ class Client:
         data = await self._call("GET", f"/sessions/{session_id}/events", params={"after": after})
         return [Event(**e) for e in data]
 
-    async def send(
-        self, session_id: str, text: str, *, client_request_id: str | None = None
-    ) -> Event:
+    async def send(self, session_id: str, text: str, *, client_request_id: str | None = None) -> Event:
         body = {"text": text, "client_request_id": client_request_id or secrets.token_hex(8)}
         return Event(**await self._call("POST", f"/sessions/{session_id}/messages", json=body))
 
@@ -94,17 +90,13 @@ class Client:
 
     async def confirm(self, session_id: str, tool_use_id: str, decision: str) -> dict[str, Any]:
         body = {"tool_use_id": tool_use_id, "decision": decision}
-        approval: dict[str, Any] = await self._call(
-            "POST", f"/sessions/{session_id}/approvals", json=body
-        )
+        approval: dict[str, Any] = await self._call("POST", f"/sessions/{session_id}/approvals", json=body)
         return approval
 
     async def terminate(self, session_id: str) -> Session:
         return Session(**await self._call("POST", f"/sessions/{session_id}/terminate"))
 
-    async def follow(
-        self, session_id: str, *, after: int = 0, interval: float = 2.0
-    ) -> AsyncIterator[Event]:
+    async def follow(self, session_id: str, *, after: int = 0, interval: float = 2.0) -> AsyncIterator[Event]:
         """Yield events as they appear; stops when the session is idle or terminated."""
         while True:
             events = await self.events(session_id, after=after)

@@ -128,8 +128,7 @@ def _public(
     @router.get("/agents")
     async def list_agents(user: User) -> list[dict[str, Any]]:
         return [
-            {"agent": a.model_dump(mode="json"), "version": v.model_dump(mode="json")}
-            for a, v in await service.list_agents()
+            {"agent": a.model_dump(mode="json"), "version": v.model_dump(mode="json")} for a, v in await service.list_agents()
         ]
 
     @router.get("/agents/{agent_id}")
@@ -171,9 +170,7 @@ def _public(
         return (await viewable(session_id, user)).model_dump(mode="json")
 
     @router.get("/sessions/{session_id}/events")
-    async def events(
-        session_id: str, user: User, after: Annotated[int, Query(ge=0)] = 0
-    ) -> list[dict[str, Any]]:
+    async def events(session_id: str, user: User, after: Annotated[int, Query(ge=0)] = 0) -> list[dict[str, Any]]:
         await viewable(session_id, user)
         return [e.model_dump(mode="json") for e in await service.events(session_id, after=after)]
 
@@ -182,9 +179,7 @@ def _public(
         session = await viewable(session_id, user)
         if user.email != session.operator:
             raise Forbidden("only the operator sends messages")
-        event = await service.accept_message(
-            session_id, body.text, actor=user.email, client_request_id=body.client_request_id
-        )
+        event = await service.accept_message(session_id, body.text, actor=user.email, client_request_id=body.client_request_id)
         return event.model_dump(mode="json")
 
     @router.post("/sessions/{session_id}/interrupt", status_code=201)
@@ -192,9 +187,7 @@ def _public(
         session = await viewable(session_id, user)
         if user.email != session.operator:
             raise Forbidden("only the operator interrupts")
-        event = await service.interrupt(
-            session_id, actor=user.email, client_request_id=body.client_request_id
-        )
+        event = await service.interrupt(session_id, actor=user.email, client_request_id=body.client_request_id)
         return event.model_dump(mode="json")
 
     @router.post("/sessions/{session_id}/approvals", status_code=201)
@@ -203,9 +196,7 @@ def _public(
         _, version = await service.get_agent(session.agent_id)
         if not await in_group(user.email, version.allowed_groups):
             raise Forbidden(f"{user.email} may not approve for {session.agent_id}")
-        approval = await service.confirm(
-            session_id, body.tool_use_id, body.decision, actor=user.email
-        )
+        approval = await service.confirm(session_id, body.tool_use_id, body.decision, actor=user.email)
         return approval.model_dump(mode="json")
 
     @router.post("/sessions/{session_id}/terminate")
@@ -222,9 +213,7 @@ def _public(
 def _internal(service: Service, *, tokens: SessionTokens) -> APIRouter:
     router = APIRouter(prefix="/internal")
 
-    async def session_of(
-        session_id: str, token: Annotated[str | None, Header(alias="X-Milos-Session")] = None
-    ) -> str:
+    async def session_of(session_id: str, token: Annotated[str | None, Header(alias="X-Milos-Session")] = None) -> str:
         """The session token must name the session in the path.
 
         It travels in its own header: `Authorization` carries the caller's
@@ -244,9 +233,7 @@ def _internal(service: Service, *, tokens: SessionTokens) -> APIRouter:
         scheduled_at: Annotated[str | None, Header(alias="X-CloudScheduler-ScheduleTime")] = None,
     ) -> dict[str, Any]:
         """Cloud Scheduler: one session per scheduled time, however often it retries."""
-        client_request_id = (
-            f"{job}:{scheduled_at}" if job and scheduled_at else body.client_request_id
-        )
+        client_request_id = f"{job}:{scheduled_at}" if job and scheduled_at else body.client_request_id
         session = await service.create_session(
             body.agent_id,
             body.message,
@@ -264,9 +251,7 @@ def _internal(service: Service, *, tokens: SessionTokens) -> APIRouter:
     @router.get("/sessions/{session_id}")
     async def context(session_id: Owned) -> dict[str, Any]:
         session = await service.get_session(session_id)
-        version_doc = await service.store.get(
-            f"agents/{session.agent_id}/versions/{session.agent_version}"
-        )
+        version_doc = await service.store.get(f"agents/{session.agent_id}/versions/{session.agent_version}")
         return {"session": session.model_dump(mode="json"), "version": version_doc or {}}
 
     @router.post("/sessions/{session_id}/permit")
@@ -291,9 +276,7 @@ def _internal(service: Service, *, tokens: SessionTokens) -> APIRouter:
         return {"status": "ok"}
 
     @router.post("/sessions/{session_id}/events", status_code=201)
-    async def report(
-        session_id: Owned, lease: Lease, body: list[RunnerEventIn]
-    ) -> list[dict[str, Any]]:
+    async def report(session_id: Owned, lease: Lease, body: list[RunnerEventIn]) -> list[dict[str, Any]]:
         events = await service.report(
             session_id,
             [RunnerEvent(e.type, e.payload, e.tool_use_id) for e in body],
@@ -331,11 +314,7 @@ def build_from_env() -> FastAPI:
     settings = ApiSettings.from_env()
     tokens = SessionTokens(settings.token_key)
     audit = StderrAuditLog() if settings.dev_user else CloudAuditLog(settings.project)
-    jobs = (
-        NoJobs()
-        if settings.dev_user
-        else CloudRunJobs(settings.project, settings.region, settings.runner_job_prefix)
-    )
+    jobs = NoJobs() if settings.dev_user else CloudRunJobs(settings.project, settings.region, settings.runner_job_prefix)
     service = Service(
         FirestoreStore(project=settings.project),
         audit,

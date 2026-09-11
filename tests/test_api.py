@@ -56,15 +56,9 @@ async def test_create_session_checks_group_membership(public, agent):
 
 async def test_only_participants_see_a_session(public, session):
     sid = session.session_id
-    assert (
-        await public.get(f"/v1/sessions/{sid}", headers=as_user("alice@example.com"))
-    ).status_code == 200
-    assert (
-        await public.get(f"/v1/sessions/{sid}", headers=as_user("bob@example.com"))
-    ).status_code == 403
-    events = await public.get(
-        f"/v1/sessions/{sid}/events", params={"after": 1}, headers=as_user("alice@example.com")
-    )
+    assert (await public.get(f"/v1/sessions/{sid}", headers=as_user("alice@example.com"))).status_code == 200
+    assert (await public.get(f"/v1/sessions/{sid}", headers=as_user("bob@example.com"))).status_code == 403
+    events = await public.get(f"/v1/sessions/{sid}/events", params={"after": 1}, headers=as_user("alice@example.com"))
     assert [e["seq"] for e in events.json()] == [2]
 
 
@@ -91,12 +85,8 @@ async def test_approval_over_http(public, internal, service, session, tokens):
     assert other.status_code == 201 and other.json()["decided_by"] == "bob@example.com"
 
 
-async def test_internal_rejects_tokens_for_other_sessions(
-    internal, service, session, tokens, agent
-):
-    other = await service.create_session(
-        "analyst", "x", operator="alice@example.com", client_request_id="r2"
-    )
+async def test_internal_rejects_tokens_for_other_sessions(internal, service, session, tokens, agent):
+    other = await service.create_session("analyst", "x", operator="alice@example.com", client_request_id="r2")
     headers = {
         "X-Milos-Session": tokens.issue(other.session_id),
         "X-Milos-Lease": session.lease.token,
@@ -107,9 +97,7 @@ async def test_internal_rejects_tokens_for_other_sessions(
         "X-Milos-Session": f"{session.session_id}.deadbeef",
         "X-Milos-Lease": session.lease.token,
     }
-    assert (
-        await internal.post(f"/internal/sessions/{session.session_id}/poll", headers=forged)
-    ).status_code == 401
+    assert (await internal.post(f"/internal/sessions/{session.session_id}/poll", headers=forged)).status_code == 401
 
 
 async def test_runner_round_trip(internal, service, session, tokens):
@@ -119,23 +107,15 @@ async def test_runner_round_trip(internal, service, session, tokens):
     assert context.json()["version"]["model"].startswith("claude-")
     poll = await internal.post(f"/internal/sessions/{sid}/poll", headers=headers)
     assert poll.json()["stop"] is False and poll.json()["events"][0]["type"] == "user.message"
-    assert (
-        await internal.post(f"/internal/sessions/{sid}/ack", json={"seq": 2}, headers=headers)
-    ).status_code == 200
+    assert (await internal.post(f"/internal/sessions/{sid}/ack", json={"seq": 2}, headers=headers)).status_code == 200
     reported = await internal.post(
         f"/internal/sessions/{sid}/events",
         json=[{"type": "agent.message", "payload": {"text": "done"}}],
         headers=headers,
     )
     assert reported.status_code == 201 and reported.json()[0]["seq"] == 3
-    assert (
-        await internal.post(
-            f"/internal/sessions/{sid}/snapshot", json={"number": 1}, headers=headers
-        )
-    ).status_code == 200
-    finished = await internal.post(
-        f"/internal/sessions/{sid}/finish", json={"stop_reason": "end_turn"}, headers=headers
-    )
+    assert (await internal.post(f"/internal/sessions/{sid}/snapshot", json={"number": 1}, headers=headers)).status_code == 200
+    finished = await internal.post(f"/internal/sessions/{sid}/finish", json={"stop_reason": "end_turn"}, headers=headers)
     assert finished.json()["status"] == "idle"
     stale = await internal.post(f"/internal/sessions/{sid}/poll", headers=headers)
     assert stale.status_code == 403
@@ -177,7 +157,5 @@ async def test_inspect_endpoint(internal, session, clock):
 
 
 async def test_terminate_over_http(public, session):
-    response = await public.post(
-        f"/v1/sessions/{session.session_id}/terminate", headers=as_user("alice@example.com")
-    )
+    response = await public.post(f"/v1/sessions/{session.session_id}/terminate", headers=as_user("alice@example.com"))
     assert response.json()["status"] == "terminated"

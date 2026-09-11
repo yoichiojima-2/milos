@@ -37,9 +37,7 @@ def _service() -> Service:
     project = os.environ.get("MILOS_PROJECT")
     if not project:
         raise SystemExit("MILOS_PROJECT is not set")
-    return Service(
-        FirestoreStore(project=project), StderrAuditLog(), NoJobs(), SessionTokens("cli")
-    )
+    return Service(FirestoreStore(project=project), StderrAuditLog(), NoJobs(), SessionTokens("cli"))
 
 
 def _print_event(event: Event) -> None:
@@ -50,9 +48,7 @@ def _print_event(event: Event) -> None:
         case "agent.message":
             body = payload.get("text", "")
         case "agent.tool_use":
-            body = (
-                f"{payload.get('tool_name')} → {payload.get('decision')} ({payload.get('reason')})"
-            )
+            body = f"{payload.get('tool_name')} → {payload.get('decision')} ({payload.get('reason')})"
         case "tool.result":
             body = f"{payload.get('outcome')}: {payload.get('summary', '')[:120]}"
         case "session.status":
@@ -97,9 +93,7 @@ async def cmd_events(args: argparse.Namespace) -> int:
 async def cmd_sessions(_: argparse.Namespace) -> int:
     for s in await _client().sessions():
         pending = f" pending={','.join(s.pending_tool_use_ids)}" if s.pending_tool_use_ids else ""
-        print(
-            f"{s.session_id}  {s.agent_id:<16} {s.status.value:<12} {s.stop_reason or ''}{pending}"
-        )
+        print(f"{s.session_id}  {s.agent_id:<16} {s.status.value:<12} {s.stop_reason or ''}{pending}")
     return 0
 
 
@@ -207,9 +201,7 @@ def parser() -> argparse.ArgumentParser:
     terminate.add_argument("session")
     terminate.set_defaults(fn=cmd_terminate)
 
-    agents = sub.add_parser("agents", help="definitions (CI)").add_subparsers(
-        dest="agents_command", required=True
-    )
+    agents = sub.add_parser("agents", help="definitions (CI)").add_subparsers(dest="agents_command", required=True)
     validate = agents.add_parser("validate")
     validate.add_argument("files", nargs="+")
     validate.set_defaults(fn=cmd_agents_validate)

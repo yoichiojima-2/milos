@@ -77,9 +77,7 @@ class Connector:
         async def guarded(ctx: Context, **kwargs: Any) -> Any:
             headers = ctx.headers or {}
             session_token = headers.get("x-milos-session", "")
-            if not session_token or not await self.check.permitted(
-                session_token, tool_name, kwargs
-            ):
+            if not session_token or not await self.check.permitted(session_token, tool_name, kwargs):
                 raise Forbidden(f"{tool_name} was not permitted for this call")
             return await fn(**kwargs)
 
@@ -128,9 +126,7 @@ async def fetch(url: str, *, transport: httpx.AsyncBaseTransport | None = None) 
     """GET a public https URL, following at most MAX_REDIRECTS checked hops."""
     async with httpx.AsyncClient(transport=transport, follow_redirects=False, timeout=20) as http:
         for _ in range(MAX_REDIRECTS + 1):
-            response = await http.get(
-                check_url(url), headers={"Range": f"bytes=0-{MAX_RESPONSE_BYTES}"}
-            )
+            response = await http.get(check_url(url), headers={"Range": f"bytes=0-{MAX_RESPONSE_BYTES}"})
             if response.is_redirect:
                 url = str(response.next_request.url) if response.next_request else ""
                 continue

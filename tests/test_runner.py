@@ -81,9 +81,7 @@ class FakeSDKClient:
                 self.executed.append(call.id)
                 yield UserMessage(content=[ToolResultBlock(tool_use_id=call.id, content="ok")])
             else:
-                yield UserMessage(
-                    content=[ToolResultBlock(tool_use_id=call.id, content="denied", is_error=True)]
-                )
+                yield UserMessage(content=[ToolResultBlock(tool_use_id=call.id, content="denied", is_error=True)])
             if self.interrupted:
                 break
         if not self.interrupted:
@@ -139,9 +137,7 @@ def make_run(service, tokens, session, sdk, blobs, tmp_path: Path, monkeypatch) 
     return Run(settings, control, blobs=blobs, client_factory=sdk)
 
 
-async def test_plain_turn_reports_messages_and_finishes(
-    service, tokens, session, sdk, blobs, tmp_path, monkeypatch
-):
+async def test_plain_turn_reports_messages_and_finishes(service, tokens, session, sdk, blobs, tmp_path, monkeypatch):
     sdk.script = Script(turns=[[ToolCall("Read", {"path": "a.csv"}, "t1")]], reply="the report")
     run = make_run(service, tokens, session, sdk, blobs, tmp_path, monkeypatch)
     assert await run() == StopReason.END_TURN
@@ -169,9 +165,7 @@ async def test_denied_tool_never_runs(service, tokens, session, sdk, blobs, tmp_
     assert sdk.instances[0].executed == []
 
 
-async def test_approval_parks_then_resumes_and_executes(
-    service, tokens, session, sdk, blobs, tmp_path, monkeypatch, jobs
-):
+async def test_approval_parks_then_resumes_and_executes(service, tokens, session, sdk, blobs, tmp_path, monkeypatch, jobs):
     sid = session.session_id
     sdk.script = Script(turns=[[ToolCall("Bash", {"command": "make"}, "t1")]])
     run = make_run(service, tokens, session, sdk, blobs, tmp_path, monkeypatch)
@@ -196,18 +190,14 @@ async def test_approval_parks_then_resumes_and_executes(
     assert (await service.get_session(sid)).snapshot == 2
 
 
-async def test_budget_reached_is_reported(
-    service, tokens, session, sdk, blobs, tmp_path, monkeypatch
-):
+async def test_budget_reached_is_reported(service, tokens, session, sdk, blobs, tmp_path, monkeypatch):
     sdk.script = Script(subtype="error_max_turns")
     run = make_run(service, tokens, session, sdk, blobs, tmp_path, monkeypatch)
     assert await run() == StopReason.BUDGET_REACHED
     assert (await service.get_session(session.session_id)).stop_reason == StopReason.BUDGET_REACHED
 
 
-async def test_terminated_session_stops_the_runner(
-    service, tokens, session, sdk, blobs, tmp_path, monkeypatch
-):
+async def test_terminated_session_stops_the_runner(service, tokens, session, sdk, blobs, tmp_path, monkeypatch):
     await service.terminate(session.session_id, actor="alice@example.com")
     run = make_run(service, tokens, session, sdk, blobs, tmp_path, monkeypatch)
     assert await run() == StopReason.STOPPED
@@ -226,9 +216,7 @@ async def test_unreachable_api_denies_fail_closed(tokens, session, sdk, tmp_path
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-async def test_interrupt_during_turn_reaches_the_client(
-    service, tokens, session, sdk, blobs, tmp_path, monkeypatch
-):
+async def test_interrupt_during_turn_reaches_the_client(service, tokens, session, sdk, blobs, tmp_path, monkeypatch):
     """An interrupt queued before the turn starts is seen by the watcher on its first poll."""
     sid = session.session_id
     await service.interrupt(sid, actor="alice@example.com", client_request_id="i1")

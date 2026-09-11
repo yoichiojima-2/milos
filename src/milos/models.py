@@ -166,9 +166,7 @@ class EventType(StrEnum):
     SESSION_STATUS = "session.status"
 
 
-USER_EVENTS = frozenset(
-    {EventType.USER_MESSAGE, EventType.USER_INTERRUPT, EventType.USER_TOOL_CONFIRMATION}
-)
+USER_EVENTS = frozenset({EventType.USER_MESSAGE, EventType.USER_INTERRUPT, EventType.USER_TOOL_CONFIRMATION})
 RUNNER_EVENTS = frozenset({EventType.AGENT_MESSAGE, EventType.TOOL_RESULT, EventType.SESSION_USAGE})
 
 

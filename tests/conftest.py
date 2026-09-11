@@ -73,9 +73,7 @@ def tokens() -> SessionTokens:
 
 @pytest.fixture
 def service(store, audit, jobs, tokens, clock) -> Service:
-    return Service(
-        store, audit, jobs, tokens, runner_env={"MILOS_API_URL": "http://api"}, now=clock
-    )
+    return Service(store, audit, jobs, tokens, runner_env={"MILOS_API_URL": "http://api"}, now=clock)
 
 
 def definition(**overrides) -> AgentVersion:
@@ -109,9 +107,7 @@ async def agent(service):
 
 @pytest.fixture
 async def session(service, agent):
-    return await service.create_session(
-        "analyst", "hello", operator="alice@example.com", client_request_id="req-1"
-    )
+    return await service.create_session("analyst", "hello", operator="alice@example.com", client_request_id="req-1")
 
 
 def emulator_available() -> bool:

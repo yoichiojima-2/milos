@@ -106,9 +106,7 @@ class Control:
         data = await self._call("GET", "")
         return Context(session=Session(**data["session"]), version=data["version"])
 
-    async def permit(
-        self, tool_use_id: str, tool_name: str, args: dict[str, Any]
-    ) -> tuple[str, str]:
+    async def permit(self, tool_use_id: str, tool_name: str, args: dict[str, Any]) -> tuple[str, str]:
         data = await self._call(
             "POST",
             "/permit",
@@ -126,10 +124,7 @@ class Control:
     async def report(self, events: list[RunnerEvent]) -> None:
         if not events:
             return
-        body = [
-            {"type": e.type.value, "payload": e.payload, "tool_use_id": e.tool_use_id}
-            for e in events
-        ]
+        body = [{"type": e.type.value, "payload": e.payload, "tool_use_id": e.tool_use_id} for e in events]
         await self._call("POST", "/events", json=body)
 
     async def advance_snapshot(self, number: int) -> None:

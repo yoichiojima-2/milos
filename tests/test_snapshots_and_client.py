@@ -23,18 +23,14 @@ async def test_snapshot_round_trip(tmp_path: Path):
     transcripts.mkdir(parents=True)
     (transcripts / "session.jsonl").write_text("{}")
 
-    await snapshots.save(
-        blobs, "sess_1", 1, work_dir=work, transcripts=transcripts, manifest={"sdk_session_id": "x"}
-    )
+    await snapshots.save(blobs, "sess_1", 1, work_dir=work, transcripts=transcripts, manifest={"sdk_session_id": "x"})
     assert set(blobs.objects) == {
         "sessions/sess_1/snapshots/1/state.tar.gz",
         "sessions/sess_1/snapshots/1/manifest.json",
     }
 
     other = tmp_path / "restore"
-    manifest = await snapshots.restore(
-        blobs, "sess_1", 1, work_dir=other / "work", transcripts=other / "transcripts"
-    )
+    manifest = await snapshots.restore(blobs, "sess_1", 1, work_dir=other / "work", transcripts=other / "transcripts")
     assert manifest == {"sdk_session_id": "x"}
     assert (other / "work" / "sub" / "report.md").read_text() == "hello"
     assert (other / "transcripts" / "session.jsonl").exists()

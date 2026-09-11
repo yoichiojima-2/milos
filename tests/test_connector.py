@@ -76,9 +76,7 @@ async def test_fetch_follows_checked_redirects_and_truncates(monkeypatch):
             return httpx.Response(302, headers={"location": "https://example.com/end"})
         return httpx.Response(200, text="0123456789")
 
-    body = await connector.fetch(
-        "https://example.com/start", transport=httpx.MockTransport(handler)
-    )
+    body = await connector.fetch("https://example.com/start", transport=httpx.MockTransport(handler))
     assert body == "01234"
 
 
@@ -92,13 +90,7 @@ async def test_api_permission_check_calls_internal_api():
         return httpx.Response(200, json={"permitted": True, "tool_use_id": "t1"})
 
     check = connector.ApiPermissionCheck("http://internal")
-    check._http = httpx.AsyncClient(
-        base_url="http://internal", transport=httpx.MockTransport(handler)
-    )
-    assert (
-        await check.permitted("sess_1.sig", "mcp__egress__web_fetch", {"url": "https://x"}) is True
-    )
+    check._http = httpx.AsyncClient(base_url="http://internal", transport=httpx.MockTransport(handler))
+    assert await check.permitted("sess_1.sig", "mcp__egress__web_fetch", {"url": "https://x"}) is True
     assert seen["path"] == "/internal/sessions/sess_1/permissions"
-    assert (
-        seen["params"]["tool_name"] == "mcp__egress__web_fetch" and seen["session"] == "sess_1.sig"
-    )
+    assert seen["params"]["tool_name"] == "mcp__egress__web_fetch" and seen["session"] == "sess_1.sig"

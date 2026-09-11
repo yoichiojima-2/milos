@@ -36,35 +36,23 @@ async def test_create_session_rejects_missing_definition(service):
 async def test_create_session_rejects_disabled_agent(service, agent):
     await service.set_enabled("analyst", False)
     with pytest.raises(Stopped):
-        await service.create_session(
-            "analyst", "hi", operator="a@example.com", client_request_id="r"
-        )
+        await service.create_session("analyst", "hi", operator="a@example.com", client_request_id="r")
 
 
 async def test_create_session_enforces_concurrency(service, agent):
     for i in range(2):
-        await service.create_session(
-            "analyst", "hi", operator="a@example.com", client_request_id=f"r{i}"
-        )
+        await service.create_session("analyst", "hi", operator="a@example.com", client_request_id=f"r{i}")
     with pytest.raises(Invalid):
-        await service.create_session(
-            "analyst", "hi", operator="a@example.com", client_request_id="r9"
-        )
+        await service.create_session("analyst", "hi", operator="a@example.com", client_request_id="r9")
 
 
 async def test_create_session_is_idempotent_on_client_request_id(service, agent, jobs):
-    first = await service.create_session(
-        "analyst", "hi", operator="a@example.com", client_request_id="sched-1"
-    )
-    again = await service.create_session(
-        "analyst", "hi", operator="a@example.com", client_request_id="sched-1"
-    )
+    first = await service.create_session("analyst", "hi", operator="a@example.com", client_request_id="sched-1")
+    again = await service.create_session("analyst", "hi", operator="a@example.com", client_request_id="sched-1")
     assert again.session_id == first.session_id
     assert len(jobs.launched) == 1
     with pytest.raises(Conflict):
-        await service.create_session(
-            "analyst", "other", operator="a@example.com", client_request_id="sched-1"
-        )
+        await service.create_session("analyst", "other", operator="a@example.com", client_request_id="sched-1")
 
 
 # --- invariant 3: idempotent input ------------------------------------------
@@ -76,9 +64,7 @@ async def test_message_replay_returns_same_event(service, session):
     b = await service.accept_message(sid, "more", actor="alice@example.com", client_request_id="m1")
     assert a.event_id == b.event_id and a.seq == 3
     with pytest.raises(Conflict):
-        await service.accept_message(
-            sid, "different", actor="alice@example.com", client_request_id="m1"
-        )
+        await service.accept_message(sid, "different", actor="alice@example.com", client_request_id="m1")
 
 
 async def test_message_to_idle_session_relaunches(service, session, jobs):
@@ -110,9 +96,7 @@ async def test_stale_lease_is_rejected(service, session):
     with pytest.raises(Forbidden):
         await service.poll(sid, lease_token="old")
     with pytest.raises(Forbidden):
-        await service.report(
-            sid, [RunnerEvent(EventType.AGENT_MESSAGE, {"text": "x"})], lease_token="old"
-        )
+        await service.report(sid, [RunnerEvent(EventType.AGENT_MESSAGE, {"text": "x"})], lease_token="old")
     with pytest.raises(Forbidden):
         await service.permit(sid, lease_token="old", tool_use_id="t", tool_name="Read", args={})
 
@@ -131,9 +115,7 @@ async def test_runner_may_only_append_its_own_event_types(service, session):
 
 async def test_allowed_tool_is_journaled_audited_then_permitted(service, session, audit, store):
     sid = session.session_id
-    decision = await service.permit(
-        sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={"path": "a.csv"}
-    )
+    decision = await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={"path": "a.csv"})
     assert decision.kind == "allow"
     types = [e.type for e in await service.events(sid)]
     assert types[-2:] == [EventType.AGENT_TOOL_USE, EventType.TOOL_PERMITTED]
@@ -153,9 +135,7 @@ async def test_audit_failure_means_no_permission(service, session, audit, store)
         )
     assert f"sessions/{session.session_id}/permissions/t1" not in store.docs
     # the request itself is still on record
-    assert [e.type for e in await service.events(session.session_id)][
-        -1
-    ] == EventType.AGENT_TOOL_USE
+    assert [e.type for e in await service.events(session.session_id)][-1] == EventType.AGENT_TOOL_USE
 
 
 async def test_unlisted_tool_is_denied(service, session):
@@ -171,13 +151,9 @@ async def test_unlisted_tool_is_denied(service, session):
 
 async def test_permission_is_create_only(service, session, store):
     sid = session.session_id
-    await service.permit(
-        sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={}
-    )
+    await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={})
     with pytest.raises(AlreadyExists):
-        await service.permit(
-            sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={}
-        )
+        await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={})
 
 
 # --- approvals (REQ-D-17) -----------------------------------------------------
@@ -197,9 +173,7 @@ async def test_approval_flow_parks_session_and_resumes_on_decision(service, sess
     assert parked.status == SessionStatus.IDLE
     assert parked.stop_reason == StopReason.REQUIRES_ACTION
     assert parked.pending_tool_use_ids == ["t1"]
-    assert parked.approval_expires_at == clock.now.replace() + __import__("datetime").timedelta(
-        seconds=600
-    )
+    assert parked.approval_expires_at == clock.now.replace() + __import__("datetime").timedelta(seconds=600)
     await service.finish(sid, lease_token=lease(session), stop_reason=StopReason.REQUIRES_ACTION)
 
     with pytest.raises(Forbidden):
@@ -231,9 +205,7 @@ async def test_approval_flow_parks_session_and_resumes_on_decision(service, sess
 
 async def test_changed_arguments_need_a_new_approval(service, session, jobs):
     sid = session.session_id
-    await service.permit(
-        sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={"command": "ls"}
-    )
+    await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={"command": "ls"})
     await service.confirm(sid, "t1", "allow", actor="bob@example.com")
     resumed = await service.get_session(sid)
     changed = await service.permit(
@@ -248,22 +220,16 @@ async def test_changed_arguments_need_a_new_approval(service, session, jobs):
 
 async def test_denied_approval_denies_the_reissued_call(service, session):
     sid = session.session_id
-    await service.permit(
-        sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={"command": "ls"}
-    )
+    await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={"command": "ls"})
     await service.confirm(sid, "t1", "deny", actor="bob@example.com")
     resumed = await service.get_session(sid)
-    again = await service.permit(
-        sid, lease_token=lease(resumed), tool_use_id="t2", tool_name="Bash", args={"command": "ls"}
-    )
+    again = await service.permit(sid, lease_token=lease(resumed), tool_use_id="t2", tool_name="Bash", args={"command": "ls"})
     assert again.kind == "deny" and "bob@example.com" in again.reason
 
 
 async def test_approval_is_create_only(service, session):
     sid = session.session_id
-    await service.permit(
-        sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={}
-    )
+    await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={})
     await service.confirm(sid, "t1", "allow", actor="bob@example.com")
     with pytest.raises(Invalid):
         await service.confirm(sid, "t1", "deny", actor="carol@example.com")
@@ -271,9 +237,7 @@ async def test_approval_is_create_only(service, session):
 
 async def test_expired_approval_is_recorded_as_timed_out_deny(service, session, clock, store, jobs):
     sid = session.session_id
-    await service.permit(
-        sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={}
-    )
+    await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={})
     clock.advance(601)
     report = await service.inspect()
     assert report["expired"] == [sid]
@@ -282,9 +246,7 @@ async def test_expired_approval_is_recorded_as_timed_out_deny(service, session, 
     with pytest.raises(Invalid):
         await service.confirm(sid, "t1", "allow", actor="bob@example.com")
     assert f"sessions/{sid}/permissions/t1" not in store.docs
-    assert (
-        await service.get_session(sid)
-    ).status == SessionStatus.RUNNING  # resumed to learn the denial
+    assert (await service.get_session(sid)).status == SessionStatus.RUNNING  # resumed to learn the denial
 
 
 async def test_only_listed_approvers_may_decide(service, agent):
@@ -296,9 +258,7 @@ async def test_only_listed_approvers_may_decide(service, agent):
         approvers=["lead@example.com"],
     )
     sid = session.session_id
-    await service.permit(
-        sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={}
-    )
+    await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={})
     with pytest.raises(Forbidden):
         await service.confirm(sid, "t1", "allow", actor="bob@example.com")
     await service.confirm(sid, "t1", "allow", actor="lead@example.com")
@@ -310,9 +270,7 @@ async def test_only_listed_approvers_may_decide(service, agent):
 async def test_terminate_denies_every_further_permission(service, session):
     sid = session.session_id
     await service.terminate(sid, actor="alice@example.com")
-    decision = await service.permit(
-        sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={}
-    )
+    decision = await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={})
     assert decision.kind == "stop"
     assert (await service.poll(sid, lease_token=lease(session))).stop is True
     with pytest.raises(Stopped):
@@ -321,16 +279,12 @@ async def test_terminate_denies_every_further_permission(service, session):
 
 async def test_disabled_agent_stops_running_sessions(service, session):
     await service.set_enabled("analyst", False)
-    decision = await service.permit(
-        session.session_id, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={}
-    )
+    decision = await service.permit(session.session_id, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={})
     assert decision.kind == "stop"
     assert (await service.poll(session.session_id, lease_token=lease(session))).stop is True
 
 
-async def test_stop_between_request_and_grant_creates_no_permission(
-    service, session, store, audit, monkeypatch
-):
+async def test_stop_between_request_and_grant_creates_no_permission(service, session, store, audit, monkeypatch):
     sid = session.session_id
     original = audit.write
 
@@ -343,9 +297,7 @@ async def test_stop_between_request_and_grant_creates_no_permission(
 
     audit.write = write_then_terminate
     with pytest.raises(Stopped):
-        await service.permit(
-            sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={}
-        )
+        await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={})
     assert f"sessions/{sid}/permissions/t1" not in store.docs
 
 
@@ -415,17 +367,12 @@ async def test_budget_reached_is_recorded(service, session):
 
 async def test_connector_permission_lookup(service, session):
     sid = session.session_id
-    await service.permit(
-        sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={"path": "x"}
-    )
+    await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={"path": "x"})
     from milos.models import sha256_json
 
     found = await service.permission(sid, tool_name="Read", args_sha256=sha256_json({"path": "x"}))
     assert found and found.tool_use_id == "t1"
-    assert (
-        await service.permission(sid, tool_name="Read", args_sha256=sha256_json({"path": "y"}))
-        is None
-    )
+    assert await service.permission(sid, tool_name="Read", args_sha256=sha256_json({"path": "y"})) is None
 
 
 async def test_publish_increments_version(service):

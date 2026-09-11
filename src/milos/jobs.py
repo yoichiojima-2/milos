@@ -32,15 +32,11 @@ class CloudRunJobs:
         client = run_v2.JobsAsyncClient()
         overrides = run_v2.RunJobRequest.Overrides(
             container_overrides=[
-                run_v2.RunJobRequest.Overrides.ContainerOverride(
-                    env=[run_v2.EnvVar(name=k, value=v) for k, v in env.items()]
-                )
+                run_v2.RunJobRequest.Overrides.ContainerOverride(env=[run_v2.EnvVar(name=k, value=v) for k, v in env.items()])
             ],
             task_count=1,
         )
-        operation = await client.run_job(
-            run_v2.RunJobRequest(name=self.job_name(agent_id), overrides=overrides)
-        )
+        operation = await client.run_job(run_v2.RunJobRequest(name=self.job_name(agent_id), overrides=overrides))
         # The operation resolves when the execution finishes; we only need
         # its name, which is available immediately.
         return operation.metadata.name if operation.metadata else session_id
