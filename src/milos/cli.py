@@ -18,6 +18,7 @@ from . import definitions
 from .client import Client, id_token
 from .errors import Invalid, MilosError
 from .models import Event
+from .service import Service
 
 
 def _client() -> Client:
@@ -27,11 +28,10 @@ def _client() -> Client:
     return Client(url, token=id_token(os.environ.get("MILOS_IAP_CLIENT_ID")))
 
 
-def _service():
+def _service() -> Service:
     from .audit import StderrAuditLog
     from .auth import SessionTokens
     from .jobs import NoJobs
-    from .service import Service
     from .store import FirestoreStore
 
     project = os.environ.get("MILOS_PROJECT")
@@ -236,8 +236,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if getattr(args, "sync", False):
-            return args.fn(args)
-        return asyncio.run(args.fn(args))
+            return int(args.fn(args))
+        return int(asyncio.run(args.fn(args)))
     except MilosError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

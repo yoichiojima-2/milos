@@ -24,7 +24,7 @@ class CloudAuditLog:
     def __init__(self, project: str, *, log_name: str = LOG_NAME) -> None:
         from google.cloud import logging as cloud_logging
 
-        self._logger = cloud_logging.Client(project=project).logger(log_name)
+        self._logger = cloud_logging.Client(project=project).logger(log_name)  # type: ignore[no-untyped-call]
 
     def write(self, entry: dict[str, Any]) -> None:
         labels = {

@@ -47,7 +47,8 @@ class Document(BaseModel):
 
     def doc(self) -> dict[str, Any]:
         """The Firestore representation: enums as strings, datetimes as-is."""
-        return _plain(self.model_dump())
+        plain: dict[str, Any] = _plain(self.model_dump())
+        return plain
 
 
 def _plain(value: Any) -> Any:

@@ -51,7 +51,8 @@ class Client:
         return response.json()
 
     async def agents(self) -> list[dict[str, Any]]:
-        return await self._call("GET", "/agents")
+        agents: list[dict[str, Any]] = await self._call("GET", "/agents")
+        return agents
 
     async def create_session(
         self,
@@ -93,7 +94,10 @@ class Client:
 
     async def confirm(self, session_id: str, tool_use_id: str, decision: str) -> dict[str, Any]:
         body = {"tool_use_id": tool_use_id, "decision": decision}
-        return await self._call("POST", f"/sessions/{session_id}/approvals", json=body)
+        approval: dict[str, Any] = await self._call(
+            "POST", f"/sessions/{session_id}/approvals", json=body
+        )
+        return approval
 
     async def terminate(self, session_id: str) -> Session:
         return Session(**await self._call("POST", f"/sessions/{session_id}/terminate"))

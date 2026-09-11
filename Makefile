@@ -1,4 +1,4 @@
-.PHONY: test lint fmt validate-agents tf-fmt tf-validate image
+.PHONY: test lint typecheck fmt validate-agents tf-fmt tf-validate image
 
 ENV    ?= dev
 REGION ?= asia-northeast1
@@ -9,6 +9,9 @@ test:
 
 lint:
 	uv run ruff check . && uv run ruff format --check .
+
+typecheck:
+	uv run mypy
 
 fmt:
 	uv run ruff check --fix . && uv run ruff format .

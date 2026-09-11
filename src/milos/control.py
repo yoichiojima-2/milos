@@ -44,7 +44,7 @@ class GoogleIdentity:
         from google.auth.transport.requests import Request
         from google.oauth2 import id_token
 
-        token = await asyncio.to_thread(id_token.fetch_id_token, Request(), audience)
+        token: str = await asyncio.to_thread(id_token.fetch_id_token, Request(), audience)
         self._cache[audience] = (token, _expiry(token))
         return token
 

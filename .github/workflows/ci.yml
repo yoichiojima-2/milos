@@ -13,6 +13,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --group dev
       - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run mypy
       - run: uv run pytest -q
       # A definition that cannot be validated is never published (REQ-D-12, REQ-D-19).
       - run: uv run milos agents validate agents/*.yaml

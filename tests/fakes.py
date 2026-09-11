@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import copy
 import fnmatch
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from milos.errors import AlreadyExists
 
 
-def _matches(doc: dict[str, Any], where: list[tuple[str, str, Any]]) -> bool:
+def _matches(doc: dict[str, Any], where: Sequence[tuple[str, str, Any]]) -> bool:
     for field, op, value in where:
         actual = doc.get(field)
         if op == "==" and actual != value:
@@ -48,7 +48,7 @@ class FakeTransaction:
         self,
         collection: str,
         *,
-        where: list[tuple[str, str, Any]] = (),
+        where: Sequence[tuple[str, str, Any]] = (),
         order_by: str | None = None,
         descending: bool = False,
         limit: int | None = None,

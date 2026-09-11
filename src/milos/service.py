@@ -332,7 +332,7 @@ class Service:
             session = await self._session(tx, session_id)
             if session.status == SessionStatus.TERMINATED:
                 return session
-            updates = {
+            updates: dict[str, Any] = {
                 "status": SessionStatus.TERMINATED.value,
                 "stop_reason": StopReason.STOPPED.value,
                 "pending_tool_use_ids": [],

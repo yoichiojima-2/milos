@@ -25,13 +25,19 @@ import contextlib
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+from claude_agent_sdk.types import McpHttpServerConfig
 
 from .control import Control, GoogleIdentity, Identity
 from .models import EventType, StopReason, sha256_text
 from .service import RunnerEvent
 from .settings import RunnerSettings
 from .snapshots import Blobs, GcsBlobs, restore, save
+
+if TYPE_CHECKING:
+    from claude_agent_sdk import HookMatcher, PermissionResult
+    from claude_agent_sdk.types import HookEvent, McpServerConfig
 
 DISALLOWED_TOOLS = ["WebFetch", "WebSearch"]
 RESULT_SUMMARY_CHARS = 2_000
@@ -57,12 +63,16 @@ class Gate:
         self.stopped = False
         self.denied: list[str] = []
 
-    def hooks(self) -> dict[str, list[Any]]:
+    def hooks(self) -> dict[HookEvent, list[HookMatcher]]:
         from claude_agent_sdk import HookMatcher
 
-        return {"PreToolUse": [HookMatcher(matcher=None, hooks=[self.pre_tool_use])]}
+        # The SDK types the hook input as a union of every event's TypedDict;
+        # this hook only ever receives PreToolUse input.
+        return {"PreToolUse": [HookMatcher(matcher=None, hooks=[cast(Any, self.pre_tool_use)])]}
 
-    async def pre_tool_use(self, input_data: dict[str, Any], tool_use_id: str | None, _: Any):
+    async def pre_tool_use(
+        self, input_data: dict[str, Any], tool_use_id: str | None, _: Any
+    ) -> dict[str, Any]:
         tool_name = input_data.get("tool_name", "")
         args = input_data.get("tool_input") or {}
         tool_use_id = tool_use_id or sha256_text(f"{tool_name}:{args}")[:24]
@@ -83,7 +93,7 @@ class Gate:
         self.denied.append(tool_use_id)
         return _hook_output("deny", reason)
 
-    async def can_use_tool(self, tool_name: str, _: dict[str, Any], __: Any):
+    async def can_use_tool(self, tool_name: str, _: dict[str, Any], __: Any) -> PermissionResult:
         """Safety net: nothing the hook did not allow may run."""
         from claude_agent_sdk import PermissionResultDeny
 
@@ -105,8 +115,8 @@ def build_options(
 ) -> Any:
     from claude_agent_sdk import ClaudeAgentOptions
 
-    mcp_servers = {
-        name: {"type": "http", "url": settings.connector_urls[name], "headers": headers}
+    mcp_servers: dict[str, McpServerConfig] = {
+        name: McpHttpServerConfig(type="http", url=settings.connector_urls[name], headers=headers)
         for name, headers in connector_headers.items()
         if name in settings.connector_urls
     }

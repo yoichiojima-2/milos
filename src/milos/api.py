@@ -10,13 +10,13 @@ IAM restricts invokers, and runners additionally present the session token in
 import secrets
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .auth import IAP_HEADER, Directory, IapVerifier, Principal, SessionTokens
 from .errors import Forbidden, MilosError, Unauthorized
-from .models import EventType, StopReason
+from .models import EventType, Session, StopReason
 from .service import RunnerEvent, Service
 
 SCHEDULER_ACTOR = "scheduler"
@@ -105,9 +105,7 @@ def _public(
     iap: IapVerifier | None,
     directory: Directory | None,
     dev_user: str | None,
-):
-    from fastapi import APIRouter
-
+) -> APIRouter:
     router = APIRouter(prefix="/v1")
 
     async def principal(request: Request) -> Principal:
@@ -162,7 +160,7 @@ def _public(
         sessions = await service.list_sessions(operator=user.email)
         return [s.model_dump(mode="json") for s in sessions]
 
-    async def viewable(session_id: str, user: Principal):
+    async def viewable(session_id: str, user: Principal) -> Session:
         session = await service.get_session(session_id)
         if not service.can_view(session, user.email):
             raise Forbidden("not a participant of this session")
@@ -221,9 +219,7 @@ def _public(
 # --- internal -------------------------------------------------------------------
 
 
-def _internal(service: Service, *, tokens: SessionTokens):
-    from fastapi import APIRouter
-
+def _internal(service: Service, *, tokens: SessionTokens) -> APIRouter:
     router = APIRouter(prefix="/internal")
 
     async def session_of(
@@ -295,7 +291,9 @@ def _internal(service: Service, *, tokens: SessionTokens):
         return {"status": "ok"}
 
     @router.post("/sessions/{session_id}/events", status_code=201)
-    async def report(session_id: Owned, lease: Lease, body: list[RunnerEventIn]) -> list[dict]:
+    async def report(
+        session_id: Owned, lease: Lease, body: list[RunnerEventIn]
+    ) -> list[dict[str, Any]]:
         events = await service.report(
             session_id,
             [RunnerEvent(e.type, e.payload, e.tool_use_id) for e in body],

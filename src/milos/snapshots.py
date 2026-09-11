@@ -24,7 +24,7 @@ class Blobs(Protocol):
 
 class GcsBlobs:
     def __init__(self, bucket: str, *, project: str | None = None) -> None:
-        from google.cloud import storage
+        from google.cloud import storage  # type: ignore[attr-defined]
 
         self._bucket = storage.Client(project=project).bucket(bucket)
 
@@ -83,4 +83,5 @@ async def restore(
                 continue
             member.name = rest
             tar.extract(member, path=target, filter="data")
-    return json.loads(raw)
+    manifest: dict[str, Any] = json.loads(raw)
+    return manifest

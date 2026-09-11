@@ -47,10 +47,10 @@ def build(data: dict[str, Any], *, definition_sha256: str) -> AgentVersion:
     try:
         version = AgentVersion(**fields)
     except ValidationError as error:
-        problems = "; ".join(
+        detail = "; ".join(
             f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in error.errors()
         )
-        raise Invalid(f"invalid definition: {problems}") from error
+        raise Invalid(f"invalid definition: {detail}") from error
     problems = check(version)
     if problems:
         raise Invalid("invalid definition: " + "; ".join(problems))

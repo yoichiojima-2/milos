@@ -14,7 +14,7 @@ is exercised against the emulator (`FIRESTORE_EMULATOR_HOST`).
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from .errors import AlreadyExists
@@ -29,7 +29,7 @@ class Reader(Protocol):
         self,
         collection: str,
         *,
-        where: list[Filter] = (),
+        where: Sequence[Filter] = (),
         order_by: str | None = None,
         descending: bool = False,
         limit: int | None = None,
@@ -74,7 +74,7 @@ class FirestoreTransaction:
         self,
         collection: str,
         *,
-        where: list[Filter] = (),
+        where: Sequence[Filter] = (),
         order_by: str | None = None,
         descending: bool = False,
         limit: int | None = None,

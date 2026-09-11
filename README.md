@@ -89,6 +89,7 @@ tests/            no GCP needed; fakes.py stands in for every dependency
 uv sync --group dev
 uv run pytest -q                                  # 64 tests, no credentials
 uv run ruff check . && uv run ruff format --check .
+uv run mypy                                       # strict on src/milos
 uv run milos agents validate agents/*.yaml
 ```
 

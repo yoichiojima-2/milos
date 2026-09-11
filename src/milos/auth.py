@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -45,7 +46,7 @@ class CloudIdentityDirectory:
         credentials, _ = google.auth.default(
             scopes=["https://www.googleapis.com/auth/cloud-identity.groups.readonly"]
         )
-        self._session = AuthorizedSession(credentials)
+        self._session = AuthorizedSession(credentials)  # type: ignore[no-untyped-call]
 
     async def is_member(self, email: str, group: str) -> bool:
         import asyncio
@@ -78,7 +79,7 @@ class IapVerifier:
         from google.oauth2 import id_token
 
         try:
-            claims: dict[str, Any] = id_token.verify_token(
+            claims: Mapping[str, Any] = id_token.verify_token(
                 token, requests.Request(), audience=self._audience, certs_url=IAP_CERTS_URL
             )
         except Exception as error:  # google-auth raises ValueError subclasses
