@@ -7,28 +7,21 @@ particular execution (`X-Milos-Lease`). The connector reuses the same headers
 for its permission checks.
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import json
 import time
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import asdict, dataclass
+from typing import Any, Protocol, Self
 
 import httpx
 
-from .models import Event, Session, StopReason
-from .service import RunnerEvent
+from .models import AgentVersion, Event, Session, StopReason
+from .service import Poll, RunnerEvent
 
 
 class Identity(Protocol):
     async def token(self, audience: str) -> str | None: ...
-
-
-class NoIdentity:
-    async def token(self, audience: str) -> str | None:
-        return None
 
 
 class GoogleIdentity:
@@ -41,6 +34,7 @@ class GoogleIdentity:
         cached = self._cache.get(audience)
         if cached and cached[1] - time.time() > 120:
             return cached[0]
+        # Deferred: importing google-auth is only needed on Cloud Run.
         from google.auth.transport.requests import Request
         from google.oauth2 import id_token
 
@@ -55,16 +49,17 @@ def _expiry(jwt: str) -> float:
     return float(json.loads(base64.urlsafe_b64decode(payload)).get("exp", 0))
 
 
-@dataclass(frozen=True)
+async def auth_headers(identity: Identity | None, audience: str, headers: dict[str, str]) -> dict[str, str]:
+    """`headers` plus a bearer token for `audience` when the caller has a Google identity."""
+    if identity and (token := await identity.token(audience)):
+        return {**headers, "Authorization": f"Bearer {token}"}
+    return headers
+
+
+@dataclass(frozen=True, slots=True)
 class Context:
     session: Session
-    version: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class Polled:
-    stop: bool
-    events: list[Event]
+    version: AgentVersion
 
 
 class Control:
@@ -82,50 +77,45 @@ class Control:
         self.session_id = session_id
         self.session_token = session_token
         self.lease_token = lease_token
-        self._identity = identity or NoIdentity()
+        self._identity = identity
         self._http = httpx.AsyncClient(base_url=self.api_url, transport=transport, timeout=30)
 
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.close()
+
     async def headers(self) -> dict[str, str]:
-        headers = {"X-Milos-Session": self.session_token, "X-Milos-Lease": self.lease_token}
-        token = await self._identity.token(self.api_url)
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        return headers
+        session = {"X-Milos-Session": self.session_token, "X-Milos-Lease": self.lease_token}
+        return await auth_headers(self._identity, self.api_url, session)
 
     async def _call(self, method: str, path: str, **kwargs: Any) -> Any:
         response = await self._http.request(
-            method,
-            f"/internal/sessions/{self.session_id}{path}",
-            headers=await self.headers(),
-            **kwargs,
+            method, f"/internal/sessions/{self.session_id}{path}", headers=await self.headers(), **kwargs
         )
         response.raise_for_status()
         return response.json()
 
     async def context(self) -> Context:
         data = await self._call("GET", "")
-        return Context(session=Session(**data["session"]), version=data["version"])
+        return Context(session=Session.model_validate(data["session"]), version=AgentVersion.model_validate(data["version"]))
 
     async def permit(self, tool_use_id: str, tool_name: str, args: dict[str, Any]) -> tuple[str, str]:
-        data = await self._call(
-            "POST",
-            "/permit",
-            json={"tool_use_id": tool_use_id, "tool_name": tool_name, "args": args},
-        )
+        body = {"tool_use_id": tool_use_id, "tool_name": tool_name, "args": args}
+        data = await self._call("POST", "/permit", json=body)
         return data["decision"], data["reason"]
 
-    async def poll(self) -> Polled:
+    async def poll(self) -> Poll:
         data = await self._call("POST", "/poll")
-        return Polled(stop=data["stop"], events=[Event(**e) for e in data["events"]])
+        return Poll(stop=data["stop"], events=[Event.model_validate(e) for e in data["events"]])
 
     async def ack(self, seq: int) -> None:
         await self._call("POST", "/ack", json={"seq": seq})
 
     async def report(self, events: list[RunnerEvent]) -> None:
-        if not events:
-            return
-        body = [{"type": e.type.value, "payload": e.payload, "tool_use_id": e.tool_use_id} for e in events]
-        await self._call("POST", "/events", json=body)
+        if events:
+            await self._call("POST", "/events", json=[asdict(e) for e in events])
 
     async def advance_snapshot(self, number: int) -> None:
         await self._call("POST", "/snapshot", json={"number": number})

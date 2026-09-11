@@ -13,16 +13,18 @@ only, a bounded number of redirects, a bounded response, every URL journaled
 through the permission it consumed.
 """
 
-from __future__ import annotations
-
+import inspect
 import ipaddress
+import os
 import socket
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
 import httpx
+from mcp.server.mcpserver import Context, MCPServer
 
+from .control import GoogleIdentity, Identity, auth_headers
 from .errors import Forbidden
 from .models import sha256_json
 
@@ -39,44 +41,33 @@ class PermissionCheck(Protocol):
 class ApiPermissionCheck:
     """Asks the internal API; authenticates as the connector's own service account."""
 
-    def __init__(self, api_url: str, *, identity: Any = None) -> None:
+    def __init__(self, api_url: str, *, identity: Identity | None = None) -> None:
         self._api_url = api_url.rstrip("/")
         self._identity = identity
         self._http = httpx.AsyncClient(base_url=self._api_url, timeout=15)
 
     async def permitted(self, session_token: str, tool_name: str, args: dict[str, Any]) -> bool:
         session_id = session_token.rsplit(".", 1)[0]
-        headers = {"X-Milos-Session": session_token}
-        token = await self._identity.token(self._api_url) if self._identity else None
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
         response = await self._http.get(
             f"/internal/sessions/{session_id}/permissions",
             params={"tool_name": tool_name, "args_sha256": sha256_json(args)},
-            headers=headers,
+            headers=await auth_headers(self._identity, self._api_url, {"X-Milos-Session": session_token}),
         )
         return response.status_code == 200 and bool(response.json().get("permitted"))
 
 
 class Connector:
     def __init__(self, name: str, check: PermissionCheck) -> None:
-        from mcp.server.mcpserver import MCPServer
-
         self.name = name
         self.check = check
         self.mcp = MCPServer(name)
 
     def tool(self, fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         """Register an async tool; the permission check runs before its body."""
-        import inspect
-
-        from mcp.server.mcpserver import Context
-
         tool_name = f"mcp__{self.name}__{fn.__name__}"
 
         async def guarded(ctx: Context, **kwargs: Any) -> Any:
-            headers = ctx.headers or {}
-            session_token = headers.get("x-milos-session", "")
+            session_token = (ctx.headers or {}).get("x-milos-session", "")
             if not session_token or not await self.check.permitted(session_token, tool_name, kwargs):
                 raise Forbidden(f"{tool_name} was not permitted for this call")
             return await fn(**kwargs)
@@ -85,7 +76,7 @@ class Connector:
         # real parameters plus the context it injects.
         ctx_param = inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY, annotation=Context)
         params = list(inspect.signature(fn).parameters.values())
-        guarded.__signature__ = inspect.Signature([*params, ctx_param])  # type: ignore[attr-defined]
+        cast(Any, guarded).__signature__ = inspect.Signature([*params, ctx_param])
         guarded.__annotations__ = {**fn.__annotations__, "ctx": Context}
         guarded.__name__ = fn.__name__
         guarded.__doc__ = fn.__doc__
@@ -107,8 +98,7 @@ def _public_host(host: str) -> None:
     except socket.gaierror as error:
         raise Forbidden(f"cannot resolve {host}") from error
     for info in infos:
-        address = ipaddress.ip_address(info[4][0])
-        if not address.is_global:
+        if not ipaddress.ip_address(info[4][0]).is_global:
             raise Forbidden(f"{host} resolves to a non-public address")
 
 
@@ -152,10 +142,6 @@ def internal(check: PermissionCheck) -> Connector:
 
 
 def build_from_env(name: str) -> Any:
-    import os
-
-    from .control import GoogleIdentity
-
     check = ApiPermissionCheck(os.environ["MILOS_API_URL"], identity=GoogleIdentity())
     connector = egress(check) if name == "egress" else internal(check)
     return connector.app()
