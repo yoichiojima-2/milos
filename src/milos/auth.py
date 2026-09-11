@@ -6,19 +6,18 @@ request body is never trusted for identity.
 
 Internal API: Cloud Run IAM already restricts invokers to the runner and
 scheduler service accounts. On top of that, a runner presents the session
-token the API issued at start (`Authorization: Bearer <token>`) so a runner can
-only ever speak about its own session. The token is an HMAC over the session
-id; it is verified statelessly and never stored in Firestore.
+token the API issued at start (`X-Milos-Session`) so a runner can only ever
+speak about its own session. The token is an HMAC over the session id; it is
+verified statelessly and never stored in Firestore.
 """
 
-from __future__ import annotations
-
+import asyncio
 import hashlib
 import hmac
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from .errors import Unauthorized
 
@@ -26,10 +25,9 @@ IAP_HEADER = "x-goog-iap-jwt-assertion"
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Principal:
     email: str
-    kind: Literal["user", "scheduler", "runner"] = "user"
 
 
 class Directory(Protocol):
@@ -40,6 +38,7 @@ class CloudIdentityDirectory:
     """Transitive group membership via the Cloud Identity Groups API."""
 
     def __init__(self) -> None:
+        # Deferred: google-auth is only needed on Cloud Run.
         import google.auth
         from google.auth.transport.requests import AuthorizedSession
 
@@ -47,8 +46,6 @@ class CloudIdentityDirectory:
         self._session = AuthorizedSession(credentials)  # type: ignore[no-untyped-call]
 
     async def is_member(self, email: str, group: str) -> bool:
-        import asyncio
-
         def check() -> bool:
             lookup = self._session.get(
                 "https://cloudidentity.googleapis.com/v1/groups:lookup",
@@ -73,6 +70,7 @@ class IapVerifier:
     def verify(self, token: str | None) -> Principal:
         if not token:
             raise Unauthorized("missing IAP assertion")
+        # Deferred: google-auth is only needed behind IAP.
         from google.auth.transport import requests
         from google.oauth2 import id_token
 

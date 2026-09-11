@@ -1,14 +1,14 @@
 """Process configuration, read once from the environment.
 
 The API, the runner and the connector share this module; each reads only the
-fields it needs. Terraform sets these on the Cloud Run resources.
+fields it needs. Terraform sets these on the Cloud Run resources, so the
+variable names below are the contract with `infra/`.
 """
-
-from __future__ import annotations
 
 import json
 import os
 from dataclasses import dataclass, field
+from typing import Self
 
 
 def _env(name: str, default: str | None = None) -> str:
@@ -18,32 +18,37 @@ def _env(name: str, default: str | None = None) -> str:
     return value
 
 
-@dataclass(frozen=True)
+def _connector_urls() -> dict[str, str]:
+    urls: dict[str, str] = json.loads(os.environ.get("MILOS_CONNECTOR_URLS", "{}"))
+    return urls
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ApiSettings:
     project: str
-    region: str
-    role: str  # "public" (behind IAP) or "internal" (runner, scheduler, connector)
     token_key: str
-    iap_audience: str | None
-    runner_job_prefix: str  # jobs are named <prefix>-<agent_id>
-    internal_url: str  # what runners are told to call
-    snapshot_bucket: str
+    region: str = "asia-northeast1"
+    api_role: str = "public"  # "public" (behind IAP) or "internal" (runner, scheduler, connector)
+    iap_audience: str | None = None
+    runner_job_prefix: str = "milos-runner"  # jobs are named <prefix>-<agent_id>
+    internal_url: str = ""  # what runners are told to call
+    snapshot_bucket: str = ""
     connector_urls: dict[str, str] = field(default_factory=dict)
     vertex_region: str = "us-east5"
     dev_user: str | None = None  # local development only: trust this email without IAP
 
     @classmethod
-    def from_env(cls) -> ApiSettings:
+    def from_env(cls) -> Self:
         return cls(
             project=_env("MILOS_PROJECT"),
-            region=_env("MILOS_REGION", "asia-northeast1"),
-            role=_env("MILOS_API_ROLE", "public"),
             token_key=_env("MILOS_TOKEN_KEY"),
+            region=_env("MILOS_REGION", "asia-northeast1"),
+            api_role=_env("MILOS_API_ROLE", "public"),
             iap_audience=os.environ.get("MILOS_IAP_AUDIENCE"),
             runner_job_prefix=_env("MILOS_RUNNER_JOB_PREFIX", "milos-runner"),
             internal_url=_env("MILOS_INTERNAL_URL", ""),
             snapshot_bucket=_env("MILOS_SNAPSHOT_BUCKET", ""),
-            connector_urls=json.loads(os.environ.get("MILOS_CONNECTOR_URLS", "{}")),
+            connector_urls=_connector_urls(),
             vertex_region=_env("MILOS_VERTEX_REGION", "us-east5"),
             dev_user=os.environ.get("MILOS_DEV_USER"),
         )
@@ -59,32 +64,32 @@ class ApiSettings:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RunnerSettings:
     session_id: str
     session_token: str
     lease_token: str
-    runner_id: str
     api_url: str
     project: str
-    snapshot_bucket: str
-    connector_urls: dict[str, str]
-    vertex_region: str
-    work_dir: str
-    idle_seconds: float  # how long to wait for more input before exiting
-    poll_seconds: float
+    runner_id: str = "local"
+    snapshot_bucket: str = ""
+    connector_urls: dict[str, str] = field(default_factory=dict)
+    vertex_region: str = "us-east5"
+    work_dir: str = "/work"
+    idle_seconds: float = 30  # how long to wait for more input before exiting
+    poll_seconds: float = 2
 
     @classmethod
-    def from_env(cls) -> RunnerSettings:
+    def from_env(cls) -> Self:
         return cls(
             session_id=_env("MILOS_SESSION_ID"),
             session_token=_env("MILOS_SESSION_TOKEN"),
             lease_token=_env("MILOS_LEASE_TOKEN"),
-            runner_id=_env("MILOS_RUNNER_ID", "local"),
             api_url=_env("MILOS_API_URL"),
             project=_env("MILOS_PROJECT"),
+            runner_id=_env("MILOS_RUNNER_ID", "local"),
             snapshot_bucket=_env("MILOS_SNAPSHOT_BUCKET", ""),
-            connector_urls=json.loads(os.environ.get("MILOS_CONNECTOR_URLS", "{}")),
+            connector_urls=_connector_urls(),
             vertex_region=_env("MILOS_VERTEX_REGION", "us-east5"),
             work_dir=_env("MILOS_WORK_DIR", "/work"),
             idle_seconds=float(_env("MILOS_IDLE_SECONDS", "30")),

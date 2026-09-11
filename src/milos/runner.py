@@ -18,28 +18,36 @@ request is checked and logged. `setting_sources=[]` keeps repository settings,
 hooks and skills out: the definition's system prompt is the only instruction.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import os
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
-from claude_agent_sdk.types import McpHttpServerConfig
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    HookMatcher,
+    PermissionResult,
+    PermissionResultDeny,
+    ResultMessage,
+    TextBlock,
+    ToolResultBlock,
+    UserMessage,
+)
+from claude_agent_sdk.types import HookEvent, McpHttpServerConfig, McpServerConfig
 
-from .control import Control, GoogleIdentity, Identity
-from .models import EventType, StopReason, sha256_text
+from .control import Control, GoogleIdentity, Identity, auth_headers
+from .definitions import FORBIDDEN_TOOLS
+from .models import AgentVersion, EventType, StopReason, sha256_text
 from .service import RunnerEvent
 from .settings import RunnerSettings
 from .snapshots import Blobs, GcsBlobs, restore, save
 
-if TYPE_CHECKING:
-    from claude_agent_sdk import HookMatcher, PermissionResult
-    from claude_agent_sdk.types import HookEvent, McpServerConfig
-
-DISALLOWED_TOOLS = ["WebFetch", "WebSearch"]
+DISALLOWED_TOOLS = [*FORBIDDEN_TOOLS]
 RESULT_SUMMARY_CHARS = 2_000
 
 
@@ -64,8 +72,6 @@ class Gate:
         self.denied: list[str] = []
 
     def hooks(self) -> dict[HookEvent, list[HookMatcher]]:
-        from claude_agent_sdk import HookMatcher
-
         # The SDK types the hook input as a union of every event's TypedDict;
         # this hook only ever receives PreToolUse input.
         return {"PreToolUse": [HookMatcher(matcher=None, hooks=[cast(Any, self.pre_tool_use)])]}
@@ -79,50 +85,46 @@ class Gate:
         except Exception as error:  # the API is unreachable: fail closed
             self.denied.append(tool_use_id)
             return _hook_output("deny", f"permission service unavailable: {error}")
-        if decision == "allow":
-            return _hook_output("allow", reason)
-        if decision == "require_confirmation":
-            self.parked = tool_use_id
-            await self._interrupt()
-            return _hook_output("deny", f"{reason}; this session pauses until a human decides")
-        if decision == "stop":
-            self.stopped = True
-            await self._interrupt()
+        match decision:
+            case "allow":
+                return _hook_output("allow", reason)
+            case "require_confirmation":
+                self.parked = tool_use_id
+                await self.interrupt()
+                return _hook_output("deny", f"{reason}; this session pauses until a human decides")
+            case "stop":
+                self.stopped = True
+                await self.interrupt()
         self.denied.append(tool_use_id)
         return _hook_output("deny", reason)
 
     async def can_use_tool(self, tool_name: str, _: dict[str, Any], __: Any) -> PermissionResult:
         """Safety net: nothing the hook did not allow may run."""
-        from claude_agent_sdk import PermissionResultDeny
-
         return PermissionResultDeny(message="tool use is decided by the platform hook")
 
-    async def _interrupt(self) -> None:
+    async def interrupt(self) -> None:
         if self.client is not None:
             with contextlib.suppress(Exception):
                 await self.client.interrupt()
 
 
 def build_options(
-    version: dict[str, Any],
+    version: AgentVersion,
     settings: RunnerSettings,
     gate: Gate,
     *,
     resume: str | None,
     connector_headers: dict[str, dict[str, str]],
-) -> Any:
-    from claude_agent_sdk import ClaudeAgentOptions
-
+) -> ClaudeAgentOptions:
     mcp_servers: dict[str, McpServerConfig] = {
         name: McpHttpServerConfig(type="http", url=settings.connector_urls[name], headers=headers)
         for name, headers in connector_headers.items()
-        if name in settings.connector_urls
     }
     return ClaudeAgentOptions(
-        model=version["model"],
-        system_prompt=version["system_prompt"],
-        max_turns=version["max_turns"],
-        max_budget_usd=version["max_budget_usd"],
+        model=version.model,
+        system_prompt=version.system_prompt,
+        max_turns=version.max_turns,
+        max_budget_usd=version.max_budget_usd,
         disallowed_tools=DISALLOWED_TOOLS,
         setting_sources=[],
         permission_mode="default",
@@ -177,21 +179,13 @@ class Run:
         stop_reason = StopReason.NEEDS_ATTENTION
         try:
             self.work_dir.mkdir(parents=True, exist_ok=True)
-            manifest = None
-            if self.blobs and session.snapshot:
-                manifest = await restore(
-                    self.blobs,
-                    session.session_id,
-                    session.snapshot,
-                    work_dir=self.work_dir,
-                    transcripts=self.transcripts,
-                )
+            manifest = await self._restore(session.session_id, session.snapshot) or {}
             options = build_options(
                 version,
                 self.settings,
                 self.gate,
-                resume=(manifest or {}).get("sdk_session_id"),
-                connector_headers=await self._connector_headers(version.get("connectors", [])),
+                resume=manifest.get("sdk_session_id"),
+                connector_headers=await self._connector_headers(version.connectors),
             )
             async with self.client_factory(options) as client:
                 self.gate.client = client
@@ -206,15 +200,20 @@ class Run:
             await self.control.finish(stop_reason)
         return stop_reason
 
+    def _stopping(self) -> StopReason | None:
+        if self.gate.parked:
+            return StopReason.REQUIRES_ACTION
+        if self.gate.stopped:
+            return StopReason.STOPPED
+        if self.budget_reached:
+            return StopReason.BUDGET_REACHED
+        return None
+
     async def _loop(self, client: Any) -> StopReason:
         idle = 0.0
         while True:
-            if self.gate.parked:
-                return StopReason.REQUIRES_ACTION
-            if self.gate.stopped:
-                return StopReason.STOPPED
-            if self.budget_reached:
-                return StopReason.BUDGET_REACHED
+            if reason := self._stopping():
+                return reason
             polled = await self.control.poll()
             if polled.stop:
                 return StopReason.STOPPED
@@ -232,58 +231,50 @@ class Run:
                     await self._turn(client, continuation(event.payload))
                 # user.interrupt between turns has nothing to stop
                 await self.control.ack(event.seq)
-                if self.gate.parked or self.gate.stopped or self.budget_reached:
+                if self._stopping():
                     break
 
     async def _turn(self, client: Any, prompt: str) -> None:
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ResultMessage,
-            TextBlock,
-            ToolResultBlock,
-            UserMessage,
-        )
-
-        watcher = asyncio.create_task(self._watch(client))
-        try:
+        async with self._watching(client):
             await client.query(prompt)
             async for message in client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    text = "\n".join(b.text for b in message.content if isinstance(b, TextBlock) and b.text)
-                    if text:
-                        await self.control.report([RunnerEvent(EventType.AGENT_MESSAGE, {"text": text})])
-                elif isinstance(message, UserMessage) and isinstance(message.content, list):
-                    results = [
-                        RunnerEvent(
-                            EventType.TOOL_RESULT,
-                            {
-                                "outcome": "failed" if b.is_error else "succeeded",
-                                "summary": _summary(b.content),
-                            },
-                            tool_use_id=b.tool_use_id,
-                        )
-                        for b in message.content
-                        if isinstance(b, ToolResultBlock)
-                    ]
-                    await self.control.report(results)
-                elif isinstance(message, ResultMessage):
-                    self.sdk_session_id = message.session_id
-                    if "max_turns" in message.subtype or "budget" in message.subtype:
-                        self.budget_reached = True
-                    await self.control.report(
-                        [
-                            RunnerEvent(
-                                EventType.SESSION_USAGE,
-                                {
-                                    "subtype": message.subtype,
-                                    "num_turns": message.num_turns,
-                                    "duration_ms": message.duration_ms,
-                                    "total_cost_usd": message.total_cost_usd,
-                                    "terminal_reason": message.terminal_reason,
-                                },
-                            )
-                        ]
+                await self._record(message)
+
+    async def _record(self, message: Any) -> None:
+        """Journal what the model said, what its tools returned and what the turn cost."""
+        match message:
+            case AssistantMessage(content=blocks):
+                if text := "\n".join(b.text for b in blocks if isinstance(b, TextBlock) and b.text):
+                    await self.control.report([RunnerEvent(EventType.AGENT_MESSAGE, {"text": text})])
+            case UserMessage(content=list() as blocks):
+                results = [
+                    RunnerEvent(
+                        EventType.TOOL_RESULT,
+                        {"outcome": "failed" if b.is_error else "succeeded", "summary": _summary(b.content)},
+                        tool_use_id=b.tool_use_id,
                     )
+                    for b in blocks
+                    if isinstance(b, ToolResultBlock)
+                ]
+                await self.control.report(results)
+            case ResultMessage():
+                self.sdk_session_id = message.session_id
+                if "max_turns" in message.subtype or "budget" in message.subtype:
+                    self.budget_reached = True
+                usage = {
+                    "subtype": message.subtype,
+                    "num_turns": message.num_turns,
+                    "duration_ms": message.duration_ms,
+                    "total_cost_usd": message.total_cost_usd,
+                    "terminal_reason": message.terminal_reason,
+                }
+                await self.control.report([RunnerEvent(EventType.SESSION_USAGE, usage)])
+
+    @contextlib.asynccontextmanager
+    async def _watching(self, client: Any) -> AsyncIterator[None]:
+        watcher = asyncio.create_task(self._watch(client))
+        try:
+            yield
         finally:
             watcher.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -299,65 +290,55 @@ class Run:
                 continue
             if polled.stop:
                 self.gate.stopped = True
-                await self.gate._interrupt()
+                await self.gate.interrupt()
                 return
             if any(e.type == EventType.USER_INTERRUPT for e in polled.events):
-                await self.gate._interrupt()
+                await self.gate.interrupt()
+
+    async def _restore(self, session_id: str, number: int) -> dict[str, Any] | None:
+        if not (self.blobs and number):
+            return None
+        return await restore(self.blobs, session_id, number, work_dir=self.work_dir, transcripts=self.transcripts)
 
     async def _snapshot(self, session_id: str, number: int) -> None:
         if not self.blobs:
             return
-        await save(
-            self.blobs,
-            session_id,
-            number,
-            work_dir=self.work_dir,
-            transcripts=self.transcripts,
-            manifest={"sdk_session_id": self.sdk_session_id, "runner_id": self.settings.runner_id},
-        )
+        manifest = {"sdk_session_id": self.sdk_session_id, "runner_id": self.settings.runner_id}
+        await save(self.blobs, session_id, number, work_dir=self.work_dir, transcripts=self.transcripts, manifest=manifest)
         await self.control.advance_snapshot(number)
 
     async def _connector_headers(self, names: list[str]) -> dict[str, dict[str, str]]:
-        headers = {}
-        for name in names:
-            url = self.settings.connector_urls.get(name)
-            if not url:
-                continue
-            h = {"X-Milos-Session": self.settings.session_token}
-            token = await self.identity.token(url) if self.identity else None
-            if token:
-                h["Authorization"] = f"Bearer {token}"
-            headers[name] = h
-        return headers
+        session = {"X-Milos-Session": self.settings.session_token}
+        return {
+            name: await auth_headers(self.identity, url, session)
+            for name in names
+            if (url := self.settings.connector_urls.get(name))
+        }
 
 
 def _summary(content: Any) -> str:
-    if isinstance(content, str):
-        text = content
-    elif isinstance(content, list):
-        text = " ".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
-    else:
-        text = ""
+    match content:
+        case str():
+            text = content
+        case list():
+            text = " ".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+        case _:
+            text = ""
     return text[:RESULT_SUMMARY_CHARS]
 
 
 async def main() -> int:
-    from claude_agent_sdk import ClaudeSDKClient
-
     settings = RunnerSettings.from_env()
     identity = GoogleIdentity()
-    control = Control(
+    blobs = GcsBlobs(settings.snapshot_bucket, project=settings.project) if settings.snapshot_bucket else None
+    async with Control(
         settings.api_url,
         session_id=settings.session_id,
         session_token=settings.session_token,
         lease_token=settings.lease_token,
         identity=identity,
-    )
-    blobs = GcsBlobs(settings.snapshot_bucket, project=settings.project) if settings.snapshot_bucket else None
-    try:
+    ) as control:
         reason = await Run(settings, control, blobs=blobs, client_factory=ClaudeSDKClient, identity=identity)()
-    finally:
-        await control.close()
     return 0 if reason != StopReason.NEEDS_ATTENTION else 1
 
 

@@ -7,8 +7,6 @@ dies is restarted by the inspection pass with a fresh lease, never by Cloud
 Run itself, so an execution with side effects is never silently duplicated.
 """
 
-from __future__ import annotations
-
 from typing import Protocol
 
 
@@ -27,6 +25,7 @@ class CloudRunJobs:
         return f"{self._parent}/{self._prefix}-{agent_id}"
 
     async def launch(self, session_id: str, *, agent_id: str, env: dict[str, str]) -> str:
+        # Deferred: google-cloud-run is only needed on Cloud Run.
         from google.cloud import run_v2
 
         client = run_v2.JobsAsyncClient()

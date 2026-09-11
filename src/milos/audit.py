@@ -7,8 +7,8 @@ audit log. The log sink routes them to the locked bucket in the logging
 project (see `infra/modules/logging`).
 """
 
-from __future__ import annotations
-
+import json
+import sys
 from typing import Any, Protocol
 
 LOG_NAME = "milos-audit"
@@ -22,6 +22,7 @@ class CloudAuditLog:
     """`google-cloud-logging` writes `log_struct` synchronously unless batched."""
 
     def __init__(self, project: str, *, log_name: str = LOG_NAME) -> None:
+        # Deferred: google-cloud-logging is only needed on Cloud Run.
         from google.cloud import logging as cloud_logging
 
         self._logger = cloud_logging.Client(project=project).logger(log_name)  # type: ignore[no-untyped-call]
@@ -38,7 +39,4 @@ class StderrAuditLog:
     """Local development sink."""
 
     def write(self, entry: dict[str, Any]) -> None:
-        import json
-        import sys
-
         print(json.dumps(entry, default=str), file=sys.stderr)

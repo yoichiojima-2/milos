@@ -7,10 +7,9 @@ account. Nothing runs without one, and the registry (`registry()`) is
 generated from what is published rather than maintained by hand.
 """
 
-from __future__ import annotations
-
 import fnmatch
 import hashlib
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +25,8 @@ FORBIDDEN_TOOLS = ("WebFetch", "WebSearch")
 # The SDK's own tools an agent may be granted; anything else must be an MCP
 # tool exposed by a connector (`mcp__<connector>__<tool>`).
 SDK_TOOLS = ("Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "NotebookEdit", "Task")
+# Limits a definition must set to a positive value.
+LIMITS = ("max_turns", "max_budget_usd", "max_concurrent_sessions", "approval_ttl_sec")
 
 
 def load(path: str | Path) -> AgentVersion:
@@ -38,34 +39,20 @@ def load(path: str | Path) -> AgentVersion:
 
 
 def build(data: dict[str, Any], *, definition_sha256: str) -> AgentVersion:
-    fields = {
-        **data,
-        "version": 0,
-        "definition_sha256": definition_sha256,
-        "published_at": utcnow(),
-    }
+    fields = {**data, "version": 0, "definition_sha256": definition_sha256, "published_at": utcnow()}
     try:
-        version = AgentVersion(**fields)
+        version = AgentVersion.model_validate(fields)
     except ValidationError as error:
         detail = "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in error.errors())
         raise Invalid(f"invalid definition: {detail}") from error
-    problems = check(version)
-    if problems:
+    if problems := check(version):
         raise Invalid("invalid definition: " + "; ".join(problems))
     return version
 
 
 def check(version: AgentVersion) -> list[str]:
     """Rules pydantic cannot express. Empty list means valid."""
-    problems = []
-    if version.max_turns <= 0:
-        problems.append("max_turns must be positive")
-    if version.max_budget_usd <= 0:
-        problems.append("max_budget_usd must be positive")
-    if version.max_concurrent_sessions <= 0:
-        problems.append("max_concurrent_sessions must be positive")
-    if version.approval_ttl_sec <= 0:
-        problems.append("approval_ttl_sec must be positive")
+    problems = [f"{limit} must be positive" for limit in LIMITS if getattr(version, limit) <= 0]
     if not version.allowed_groups:
         problems.append("allowed_groups must name at least one group")
     if "@" not in version.owner:
@@ -84,34 +71,35 @@ def check(version: AgentVersion) -> list[str]:
             problems.append(f"approval_required entry {tool} is not in allowed_tools")
     for tool in version.allowed_tools:
         if tool.startswith("mcp__"):
-            connector = tool.split("__")[1] if tool.count("__") >= 2 else ""
+            name, separator, _ = tool.removeprefix("mcp__").partition("__")
+            connector = name if separator else ""
             if connector not in version.connectors:
                 problems.append(f"{tool} needs connector {connector!r} in connectors")
     return problems
 
 
+# --- the AI usage register --------------------------------------------------------
+
+COLUMNS: tuple[tuple[str, Callable[[Agent, AgentVersion], str]], ...] = (
+    ("Agent", lambda agent, _: agent.agent_id),
+    ("Version", lambda _, version: str(version.version)),
+    ("Enabled", lambda agent, _: "yes" if agent.enabled else "no"),
+    ("Purpose", lambda _, version: version.purpose),
+    ("Owner", lambda _, version: version.owner),
+    ("Data classes", lambda _, version: ", ".join(version.data_classes)),
+    ("Tools", lambda _, version: ", ".join(version.allowed_tools)),
+    ("Needs approval", lambda _, version: ", ".join(version.approval_required) or "—"),
+    ("Runner SA", lambda _, version: version.runner_sa),
+)
+
+
 def registry(rows: list[tuple[Agent, AgentVersion]]) -> str:
     """The AI usage register as Markdown, generated from published definitions."""
-    lines = [
-        "| Agent | Version | Enabled | Purpose | Owner | Data classes | Tools | Needs approval | Runner SA |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-    ]
-    for agent, version in rows:
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    agent.agent_id,
-                    str(version.version),
-                    "yes" if agent.enabled else "no",
-                    version.purpose,
-                    version.owner,
-                    ", ".join(version.data_classes),
-                    ", ".join(version.allowed_tools),
-                    ", ".join(version.approval_required) or "—",
-                    version.runner_sa,
-                ]
-            )
-            + " |"
-        )
-    return "\n".join(lines) + "\n"
+
+    def line(cells: Iterable[str]) -> str:
+        return "| " + " | ".join(cells) + " |"
+
+    header = line(heading for heading, _ in COLUMNS)
+    rule = line("---" for _ in COLUMNS)
+    body = [line(cell(agent, version) for _, cell in COLUMNS) for agent, version in rows]
+    return "\n".join([header, rule, *body]) + "\n"
