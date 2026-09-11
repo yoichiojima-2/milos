@@ -1,5 +1,6 @@
 project       = "milos-20260827"
 region        = "asia-northeast1"
 vertex_region = "us-east5"
-image         = "asia-northeast1-docker.pkg.dev/milos-20260827/milos/milos:reset-20260912-3"
+# Built with Cloud Build and pushed to the runtime registry (docs/operations.md).
+image         = "asia-northeast1-docker.pkg.dev/milos-20260827/milos/milos:<tag>"
 users         = ["yoichiojima@gmail.com"]

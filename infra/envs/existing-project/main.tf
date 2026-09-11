@@ -98,20 +98,6 @@ module "data" {
   depends_on              = [google_project_service.apis]
 }
 
-# Adopt retained resources from the pre-0.2 deployment in the same state.
-moved {
-  from = google_artifact_registry_repository.milos
-  to   = module.runtime.google_artifact_registry_repository.images
-}
-moved {
-  from = google_firestore_database.default
-  to   = module.runtime.google_firestore_database.default
-}
-moved {
-  from = google_firestore_backup_schedule.weekly
-  to   = module.runtime.google_firestore_backup_schedule.weekly
-}
-
 output "public_url" { value = module.runtime.public_url }
 output "internal_url" { value = module.runtime.internal_url }
 output "runner_service_accounts" { value = module.runtime.runner_service_accounts }
