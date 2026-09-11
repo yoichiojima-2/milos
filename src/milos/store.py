@@ -12,14 +12,12 @@ so the invariants are tested without credentials; the Firestore implementation
 is exercised against the emulator (`FIRESTORE_EMULATOR_HOST`).
 """
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
 from .errors import AlreadyExists
 
-Filter = tuple[str, str, Any]  # (field, op, value); ops: ==, in, <, <=, >, >=
+type Filter = tuple[str, str, Any]  # (field, op, value); ops: ==, in, <, <=, >, >=
 
 
 class Reader(Protocol):
@@ -46,7 +44,6 @@ class Transaction(Reader, Protocol):
     def update(self, path: str, fields: dict[str, Any]) -> None: ...
 
 
-@runtime_checkable
 class Store(Reader, Protocol):
     async def transaction[T](self, fn: Callable[[Transaction], Awaitable[T]]) -> T: ...
 
@@ -79,6 +76,7 @@ class FirestoreTransaction:
         descending: bool = False,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
+        # Deferred here and below: google-cloud-firestore is only needed on Cloud Run.
         from google.cloud.firestore_v1 import FieldFilter
         from google.cloud.firestore_v1.query import Query
 
