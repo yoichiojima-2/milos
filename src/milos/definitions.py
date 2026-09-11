@@ -17,7 +17,7 @@ import yaml
 from pydantic import ValidationError
 
 from .errors import Invalid
-from .models import Agent, AgentVersion, utcnow
+from .models import DATA_CLASS, Agent, AgentVersion, utcnow
 
 # Tools the SDK ships that must never be granted directly: the web goes
 # through a connector, where the URL is logged and the host is checked.
@@ -61,6 +61,9 @@ def check(version: AgentVersion) -> list[str]:
         problems.append("purpose must not be empty")
     if not version.runner_sa.endswith(".iam.gserviceaccount.com"):
         problems.append("runner_sa must be a service account email")
+    for label in version.data_classes:
+        if not DATA_CLASS.fullmatch(label):
+            problems.append(f"data class {label!r} must be C followed by a number")
     for tool in version.allowed_tools:
         if tool in FORBIDDEN_TOOLS:
             problems.append(f"{tool} may not be granted directly; use a connector")

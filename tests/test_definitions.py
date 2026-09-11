@@ -35,6 +35,7 @@ def write(tmp_path: Path, **overrides) -> Path:
         ({"approval_required": ["Edit"]}, "not in allowed_tools"),
         ({"connectors": []}, "needs connector"),
         ({"owner": "nobody"}, "email"),
+        ({"data_classes": ["confidential"]}, "must be C followed by a number"),
         ({"unexpected": 1}, "unexpected"),
     ],
 )

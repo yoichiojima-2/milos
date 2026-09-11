@@ -17,6 +17,7 @@ Collections:
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -36,6 +37,16 @@ def sha256_json(value: Any) -> str:
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+DATA_CLASS = re.compile(r"C(\d+)")
+
+
+def data_class_rank(label: str) -> int:
+    """C1 < C2 < ... < C10: data classes order by their number, not their text."""
+    if not (match := DATA_CLASS.fullmatch(label)):
+        raise ValueError(f"{label!r} is not a data class")
+    return int(match[1])
 
 
 class Document(BaseModel):
@@ -83,7 +94,7 @@ class AgentVersion(Document):
     purpose: str
     owner: str
     allowed_groups: list[str]  # Google groups allowed to start sessions
-    data_classes: list[str]
+    data_classes: list[str]  # C1, C2, C3 ...; the session inherits the highest by number
     allowed_tools: list[str]  # platform capabilities; never passed to the SDK as-is
     approval_required: list[str]  # subset of allowed_tools
     approval_ttl_sec: int

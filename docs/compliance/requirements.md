@@ -6,7 +6,7 @@ The team's security requirements derive ISO/IEC 27001 and 42001 controls into sy
 
 | ID | Requirement | Implementation | Verification |
 | --- | --- | --- | --- |
-| REQ-D-01 | Data carries a class; the class decides project placement and access boundary | `modules/foundation` project roles; `modules/data` per class with labels and dataset IAM; `AgentVersion.data_classes` → `Session.classification` | `terraform validate` in CI; label query on data projects (procedure) |
+| REQ-D-01 | Data carries a class; the class decides project placement and access boundary | `modules/foundation` project roles; `modules/data` per class with labels and dataset IAM; `AgentVersion.data_classes` → `Session.classification` (highest class by number; labels validated in `definitions.check`) | `terraform validate` in CI; label query on data projects (procedure) |
 | REQ-D-02 | One boundary around every project; no structural way to move data out | `modules/perimeter` (VPC-SC, dry-run first); `modules/network` no NAT, restricted VIP only, default-deny egress; `modules/egress` FQDN rules per identity | Runner `curl` to a public host fails (first deploy §5); VPC-SC dry-run log |
 | REQ-D-03 | Sensitive data masked on ingestion; raw data stays in its domain | Not in code. Sensitive Data Protection on the ingestion side of data projects (rollout step 4) | Procedure until built |
 | REQ-D-04 | Encryption at rest documented | Google-managed keys everywhere; secrets only in Secret Manager (`modules/runtime`, `modules/egress`) | Document (this file) |

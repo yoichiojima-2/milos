@@ -28,6 +28,15 @@ async def test_create_session_writes_first_event_and_launches(service, session, 
     assert "MILOS_API_URL" in launched["env"]
 
 
+async def test_classification_is_the_highest_data_class_by_number(service):
+    await service.publish(definition(data_classes=["C2", "C10"]))
+    session = await service.create_session("analyst", "hi", operator="a@example.com", client_request_id="r1")
+    assert session.classification == "C10"
+    await service.publish(definition(agent_id="plain", data_classes=[]))
+    unclassified = await service.create_session("plain", "hi", operator="a@example.com", client_request_id="r2")
+    assert unclassified.classification == "none"
+
+
 async def test_create_session_rejects_missing_definition(service):
     with pytest.raises(NotFound):
         await service.create_session("ghost", "hi", operator="a@example.com", client_request_id="r")
