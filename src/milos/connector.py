@@ -32,6 +32,7 @@ MAX_URL_LENGTH = 2048
 MAX_REDIRECTS = 3
 MAX_RESPONSE_BYTES = 1_000_000
 METADATA_HOSTS = {"metadata.google.internal", "169.254.169.254"}
+MCP_PATH = "/mcp"  # where a connector mounts its MCP transport; the runner appends it to the service URL
 
 
 class PermissionCheck(Protocol):
@@ -84,7 +85,7 @@ class Connector:
         return fn
 
     def app(self) -> Any:
-        return self.mcp.streamable_http_app(stateless_http=True, host="0.0.0.0")
+        return self.mcp.streamable_http_app(stateless_http=True, host="0.0.0.0", streamable_http_path=MCP_PATH)
 
 
 # --- the egress connector's reference tool ---------------------------------------

@@ -16,6 +16,12 @@ envs/
   dev          wires the modules; copy for stg and prod
 ```
 
-`terraform fmt -recursive -check infra` and `terraform -chdir=infra/envs/dev validate` run in CI. Apply happens from `main` with Workload Identity Federation; see `docs/operations.md`.
+`terraform fmt -recursive -check infra` and `terraform -chdir=infra/envs/<env> validate` for each root under `envs/` (`dev`, `existing-project`) run in CI. Apply happens from `main` with Workload Identity Federation; see `docs/operations.md`.
 
 Organization-level items are inputs, not resources: the folder, the billing account, the Access Context Manager policy, and the folder organization policies (`run.allowedVPCEgress=all-traffic`, `restrictServiceUsage`).
+
+For a development deployment inside one existing project without an organization,
+use [envs/existing-project](envs/existing-project/README.md). It retains separate
+runtime/egress networks, but does not provide the four-project administrative
+separation or organization controls. The Milos deployment status and remaining
+activation steps are recorded in [deployments/existing-project](../deployments/existing-project/README.md).

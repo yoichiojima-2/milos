@@ -1,0 +1,8 @@
+.gcloudignore
+.git
+.gitignore
+#!include:.gitignore
+.mypy_cache/
+**/.terraform/
+**/terraform.tfvars
+**/terraform.tfstate*

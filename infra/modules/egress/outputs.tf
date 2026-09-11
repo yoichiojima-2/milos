@@ -7,5 +7,9 @@ output "connector_urls" {
 }
 
 output "service_accounts" {
-  value = [google_service_account.connector.email, google_service_account.web_fetch.email]
+  description = "Service name -> identity, for the runtime module's extra_internal_invokers."
+  value = {
+    connector = google_service_account.connector.email
+    web_fetch = google_service_account.web_fetch.email
+  }
 }

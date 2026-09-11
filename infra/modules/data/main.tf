@@ -28,8 +28,10 @@ resource "google_storage_bucket" "data" {
   }
 }
 
+# Keyed by name: the emails are unknown at plan time on a fresh project, and a
+# positional key would move every binding after one that is removed.
 resource "google_storage_bucket_iam_member" "readers" {
-  for_each = toset(var.reader_service_accounts)
+  for_each = var.reader_service_accounts
 
   bucket = google_storage_bucket.data.name
   role   = "roles/storage.objectViewer"
@@ -53,8 +55,8 @@ resource "google_bigquery_dataset" "this" {
 
 resource "google_bigquery_dataset_iam_member" "readers" {
   for_each = {
-    for pair in setproduct(keys(var.datasets), var.reader_service_accounts) :
-    "${pair[0]}/${pair[1]}" => { dataset = pair[0], sa = pair[1] }
+    for pair in setproduct(keys(var.datasets), keys(var.reader_service_accounts)) :
+    "${pair[0]}/${pair[1]}" => { dataset = pair[0], sa = var.reader_service_accounts[pair[1]] }
   }
 
   project    = var.project

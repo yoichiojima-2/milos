@@ -121,7 +121,7 @@ module "data" {
   region                  = var.region
   classification          = "C1"
   retention_days          = 365
-  reader_service_accounts = [module.runtime.connector_service_account]
+  reader_service_accounts = { connector = module.runtime.connector_service_account }
 
   depends_on = [module.foundation]
 }

@@ -1,0 +1,10 @@
+.git
+.venv
+**/.terraform
+**/terraform.tfstate*
+**/terraform.tfvars
+.env
+.mypy_cache
+.pytest_cache
+.ruff_cache
+**/__pycache__

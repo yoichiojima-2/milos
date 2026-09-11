@@ -45,6 +45,7 @@ variable "agent_ids" {
 variable "users_group" {
   description = "Google group allowed through IAP to the public API."
   type        = string
+  default     = null
 }
 
 variable "iap_audience" {
@@ -59,9 +60,9 @@ variable "connector_urls" {
 }
 
 variable "extra_internal_invokers" {
-  description = "Service accounts outside this project allowed to call the internal API (egress connectors)."
-  type        = list(string)
-  default     = []
+  description = "Name -> service account outside this project allowed to call the internal API (the egress module's service_accounts output)."
+  type        = map(string)
+  default     = {}
 }
 
 variable "schedules" {
@@ -89,4 +90,10 @@ variable "runner_timeout" {
 variable "alert_email" {
   type    = string
   default = null
+}
+
+variable "users" {
+  description = "Individual Google accounts allowed through IAP. Agent definitions must also allow them."
+  type        = list(string)
+  default     = []
 }

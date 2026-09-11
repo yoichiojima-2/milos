@@ -16,15 +16,18 @@ jobs:
       - run: uv run mypy
       - run: uv run pytest -q
       # A definition that cannot be validated is never published (REQ-D-12, REQ-D-19).
-      - run: uv run milos agents validate agents/*.yaml
+      - run: uv run milos agents validate agents/*.yaml deployments/*/*.yaml
 
   terraform:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, existing-project]
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.13.3"
       - run: terraform fmt -recursive -check infra
-      - run: terraform -chdir=infra/envs/dev init -backend=false -input=false
-      - run: terraform -chdir=infra/envs/dev validate
+      - run: terraform -chdir=infra/envs/${{ matrix.environment }} init -backend=false -input=false
+      - run: terraform -chdir=infra/envs/${{ matrix.environment }} validate
