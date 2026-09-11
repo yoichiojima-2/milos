@@ -60,9 +60,9 @@ variable "connector_urls" {
 }
 
 variable "extra_internal_invokers" {
-  description = "Service accounts outside this project allowed to call the internal API (egress connectors)."
-  type        = list(string)
-  default     = []
+  description = "Name -> service account outside this project allowed to call the internal API (the egress module's service_accounts output)."
+  type        = map(string)
+  default     = {}
 }
 
 variable "schedules" {

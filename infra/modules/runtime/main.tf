@@ -297,14 +297,28 @@ resource "google_cloud_run_v2_service_iam_member" "iap_invokes_public" {
   member   = "serviceAccount:${google_project_service_identity.iap.email}"
 }
 
+# Everyone allowed through IAP: the group (dev) and/or individual accounts
+# (existing-project). Keyed by a stable name so adding one never moves another.
+locals {
+  iap_accessors = merge(
+    var.users_group == null ? {} : { group = "group:${var.users_group}" },
+    { for user in var.users : "user/${user}" => "user:${user}" },
+  )
+}
+
 resource "google_iap_web_cloud_run_service_iam_member" "users" {
-  count = var.users_group == null ? 0 : 1
+  for_each = local.iap_accessors
 
   project                = var.project
   location               = var.region
   cloud_run_service_name = google_cloud_run_v2_service.public.name
   role                   = "roles/iap.httpsResourceAccessor"
-  member                 = "group:${var.users_group}"
+  member                 = each.value
+}
+
+moved {
+  from = google_iap_web_cloud_run_service_iam_member.users
+  to   = google_iap_web_cloud_run_service_iam_member.users["group"]
 }
 
 # --- API, internal: runners, connectors, scheduler ---------------------------------
@@ -345,16 +359,22 @@ resource "google_cloud_run_v2_service" "internal" {
   depends_on = [google_secret_manager_secret_iam_member.api_token_key]
 }
 
+# Keyed by a stable name, not by email or position: the emails are unknown at
+# plan time on a fresh project, and a positional key would re-create every
+# binding after the one that moved when an agent is added.
 locals {
-  internal_invokers = concat(
-    [google_service_account.scheduler.email, google_service_account.connector.email],
-    [for sa in google_service_account.runner : sa.email],
-    var.extra_internal_invokers,
+  internal_invokers = merge(
+    {
+      scheduler = google_service_account.scheduler.email
+      connector = google_service_account.connector.email
+    },
+    { for id, sa in google_service_account.runner : "runner/${id}" => sa.email },
+    { for name, email in var.extra_internal_invokers : "egress/${name}" => email },
   )
 }
 
 resource "google_cloud_run_v2_service_iam_member" "internal_invokers" {
-  for_each = { for index, email in local.internal_invokers : tostring(index) => email }
+  for_each = local.internal_invokers
 
   project  = var.project
   location = var.region
@@ -544,13 +564,4 @@ resource "google_monitoring_alert_policy" "denied_burst" {
   }
 
   notification_channels = [google_monitoring_notification_channel.email[0].id]
-}
-
-resource "google_iap_web_cloud_run_service_iam_member" "individual_users" {
-  for_each               = toset(var.users)
-  project                = var.project
-  location               = var.region
-  cloud_run_service_name = google_cloud_run_v2_service.public.name
-  role                   = "roles/iap.httpsResourceAccessor"
-  member                 = "user:${each.value}"
 }

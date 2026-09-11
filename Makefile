@@ -17,7 +17,7 @@ fmt:
 	uv run ruff check --fix . && uv run ruff format .
 
 validate-agents:
-	uv run milos agents validate agents/*.yaml
+	uv run milos agents validate agents/*.yaml deployments/*/*.yaml
 
 tf-fmt:
 	terraform fmt -recursive -check infra

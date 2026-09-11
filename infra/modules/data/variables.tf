@@ -16,9 +16,9 @@ variable "retention_days" {
 }
 
 variable "reader_service_accounts" {
-  description = "Identities allowed to read (normally only the internal connector)."
-  type        = list(string)
-  default     = []
+  description = "Name -> identity allowed to read (normally only the internal connector)."
+  type        = map(string)
+  default     = {}
 }
 
 variable "datasets" {

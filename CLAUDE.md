@@ -7,8 +7,8 @@ Secure agent platform on Google Cloud. One Python package (`src/milos/`): API, r
 - `uv run pytest -q` — no GCP needed; `tests/fakes.py` stands in for Firestore, Cloud Logging, Cloud Run Jobs, GCS and group lookups
 - `uv run ruff check . && uv run ruff format .` — CI checks both
 - `uv run mypy` — strict, `src/milos` only; the `Protocol` classes are only enforced here, so keep it green
-- `uv run milos agents validate agents/*.yaml` — CI runs it; an invalid definition is never published
-- `terraform fmt -recursive -check infra && terraform -chdir=infra/envs/dev validate`
+- `uv run milos agents validate agents/*.yaml deployments/*/*.yaml` — CI runs it; an invalid definition is never published
+- `terraform fmt -recursive -check infra && terraform -chdir=infra/envs/dev validate && terraform -chdir=infra/envs/existing-project validate` — CI validates both roots
 
 ## Rules that shape the code
 

@@ -40,6 +40,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import HookEvent, McpHttpServerConfig, McpServerConfig
 
+from .connector import MCP_PATH
 from .control import Control, GoogleIdentity, Identity, auth_headers
 from .definitions import FORBIDDEN_TOOLS
 from .models import AgentVersion, EventType, StopReason, sha256_text
@@ -108,6 +109,12 @@ class Gate:
                 await self.client.interrupt()
 
 
+def mcp_url(connector_url: str) -> str:
+    """The connector's MCP endpoint: the service URL plus the path its server mounts."""
+    base = connector_url.rstrip("/")
+    return base if base.endswith(MCP_PATH) else base + MCP_PATH
+
+
 def build_options(
     version: AgentVersion,
     settings: RunnerSettings,
@@ -117,7 +124,7 @@ def build_options(
     connector_headers: dict[str, dict[str, str]],
 ) -> ClaudeAgentOptions:
     mcp_servers: dict[str, McpServerConfig] = {
-        name: McpHttpServerConfig(type="http", url=f"{settings.connector_urls[name].rstrip('/')}/mcp", headers=headers)
+        name: McpHttpServerConfig(type="http", url=mcp_url(settings.connector_urls[name]), headers=headers)
         for name, headers in connector_headers.items()
     }
     return ClaudeAgentOptions(

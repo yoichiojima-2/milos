@@ -96,6 +96,14 @@ async def test_api_permission_check_calls_internal_api():
     assert seen["params"]["tool_name"] == "mcp__egress__web_fetch" and seen["session"] == "sess_1.sig"
 
 
+def test_mcp_url_appends_the_transport_path_once():
+    from milos.runner import mcp_url
+
+    assert mcp_url("https://egress.run.app") == "https://egress.run.app/mcp"
+    assert mcp_url("https://egress.run.app/") == "https://egress.run.app/mcp"
+    assert mcp_url("http://localhost:8080/mcp") == "http://localhost:8080/mcp"
+
+
 async def test_runner_connector_url_reaches_the_mcp_transport():
     from milos.runner import Gate, build_options
     from milos.settings import RunnerSettings

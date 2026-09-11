@@ -56,3 +56,5 @@ def test_definition_allows_explicit_google_users(tmp_path):
     assert version.allowed_users == ["owner@gmail.com"]
     with pytest.raises(Invalid, match="email addresses"):
         definitions.load(write(tmp_path, allowed_groups=[], allowed_users=["not-an-email"]))
+    with pytest.raises(Invalid, match="lower-case"):
+        definitions.load(write(tmp_path, allowed_groups=[], allowed_users=["Owner@Gmail.com"]))

@@ -134,7 +134,7 @@ def _public(service: Service, *, iap: IapVerifier | None, directory: Directory |
     User = Annotated[Principal, Depends(principal)]
 
     async def require_member(email: str, version: AgentVersion, message: str) -> None:
-        if email in version.allowed_users:
+        if email.lower() in version.allowed_users:
             return
         for group in version.allowed_groups:
             if directory is not None and await directory.is_member(email, group):

@@ -16,7 +16,7 @@ envs/
   dev          wires the modules; copy for stg and prod
 ```
 
-`terraform fmt -recursive -check infra` and `terraform -chdir=infra/envs/dev validate` run in CI. Apply happens from `main` with Workload Identity Federation; see `docs/operations.md`.
+`terraform fmt -recursive -check infra` and `terraform -chdir=infra/envs/<env> validate` for each root under `envs/` (`dev`, `existing-project`) run in CI. Apply happens from `main` with Workload Identity Federation; see `docs/operations.md`.
 
 Organization-level items are inputs, not resources: the folder, the billing account, the Access Context Manager policy, and the folder organization policies (`run.allowedVPCEgress=all-traffic`, `restrictServiceUsage`).
 

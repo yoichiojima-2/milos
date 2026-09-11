@@ -174,6 +174,9 @@ async def test_explicit_user_access_still_requires_verified_identity(public, ser
     assert rejected.status_code == 403
     created = await public.post("/v1/sessions", json=body, headers=as_user("owner@gmail.com"))
     assert created.status_code == 201 and created.json()["operator"] == "owner@gmail.com"
+    # IAP asserts the address as Google stores it; the definition's spelling must not lock the user out.
+    upper = await public.post("/v1/sessions", json=body | {"client_request_id": "upper"}, headers=as_user("Owner@Gmail.com"))
+    assert upper.status_code == 201
 
 
 async def test_explicit_user_cannot_approve_own_session(public, service):
