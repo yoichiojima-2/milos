@@ -15,8 +15,6 @@ Collections:
       approvals/{tool_use_id}    create-only
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -47,18 +45,22 @@ class Document(BaseModel):
 
     def doc(self) -> dict[str, Any]:
         """The Firestore representation: enums as strings, datetimes as-is."""
-        plain: dict[str, Any] = _plain(self.model_dump())
-        return plain
+        return {k: _plain(v) for k, v in self.model_dump().items()}
 
 
 def _plain(value: Any) -> Any:
-    if isinstance(value, StrEnum):
-        return value.value
-    if isinstance(value, dict):
-        return {k: _plain(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_plain(v) for v in value]
-    return value
+    match value:
+        case StrEnum():
+            return value.value
+        case dict():
+            return {k: _plain(v) for k, v in value.items()}
+        case list():
+            return [_plain(v) for v in value]
+        case _:
+            return value
+
+
+type ToolDecision = Literal["allow", "deny"]
 
 
 # --- agents -----------------------------------------------------------------
@@ -149,10 +151,6 @@ class Session(Document):
     created_at: datetime
     updated_at: datetime
 
-    @property
-    def active(self) -> bool:
-        return self.status in (SessionStatus.RUNNING, SessionStatus.RESCHEDULING)
-
 
 class EventType(StrEnum):
     USER_MESSAGE = "user.message"
@@ -199,7 +197,7 @@ class Approval(Document):
     """sessions/{session_id}/approvals/{tool_use_id}. Create-only."""
 
     tool_use_id: str
-    decision: Literal["allow", "deny"]
+    decision: ToolDecision
     decided_by: str  # from the IAP identity; rejected when equal to the operator
     decided_at: datetime
     expires_at: datetime
