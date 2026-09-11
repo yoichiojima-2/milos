@@ -29,7 +29,7 @@ resource "google_storage_bucket" "data" {
 }
 
 resource "google_storage_bucket_iam_member" "readers" {
-  for_each = toset(var.reader_service_accounts)
+  for_each = { for index, email in var.reader_service_accounts : tostring(index) => email }
 
   bucket = google_storage_bucket.data.name
   role   = "roles/storage.objectViewer"

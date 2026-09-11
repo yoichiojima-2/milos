@@ -1,0 +1,5 @@
+project       = "milos-20260827"
+region        = "asia-northeast1"
+vertex_region = "us-east5"
+image         = "asia-northeast1-docker.pkg.dev/milos-20260827/milos/milos:reset-20260912-3"
+users         = ["yoichiojima@gmail.com"]

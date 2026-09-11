@@ -53,8 +53,10 @@ def build(data: dict[str, Any], *, definition_sha256: str) -> AgentVersion:
 def check(version: AgentVersion) -> list[str]:
     """Rules pydantic cannot express. Empty list means valid."""
     problems = [f"{limit} must be positive" for limit in LIMITS if getattr(version, limit) <= 0]
-    if not version.allowed_groups:
-        problems.append("allowed_groups must name at least one group")
+    if not version.allowed_groups and not version.allowed_users:
+        problems.append("allowed_groups must name at least one group or allowed_users must name a user")
+    if any("@" not in email or email != email.strip() for email in version.allowed_users):
+        problems.append("allowed_users must contain email addresses")
     if "@" not in version.owner:
         problems.append("owner must be an email address")
     if not version.purpose.strip():

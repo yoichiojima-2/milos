@@ -83,6 +83,7 @@ class AgentVersion(Document):
     purpose: str
     owner: str
     allowed_groups: list[str]  # Google groups allowed to start sessions
+    allowed_users: list[str] = Field(default_factory=list)  # Explicit Google identities for projects without groups
     data_classes: list[str]
     allowed_tools: list[str]  # platform capabilities; never passed to the SDK as-is
     approval_required: list[str]  # subset of allowed_tools

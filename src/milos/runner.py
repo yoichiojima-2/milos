@@ -117,7 +117,7 @@ def build_options(
     connector_headers: dict[str, dict[str, str]],
 ) -> ClaudeAgentOptions:
     mcp_servers: dict[str, McpServerConfig] = {
-        name: McpHttpServerConfig(type="http", url=settings.connector_urls[name], headers=headers)
+        name: McpHttpServerConfig(type="http", url=f"{settings.connector_urls[name].rstrip('/')}/mcp", headers=headers)
         for name, headers in connector_headers.items()
     }
     return ClaudeAgentOptions(

@@ -298,6 +298,8 @@ resource "google_cloud_run_v2_service_iam_member" "iap_invokes_public" {
 }
 
 resource "google_iap_web_cloud_run_service_iam_member" "users" {
+  count = var.users_group == null ? 0 : 1
+
   project                = var.project
   location               = var.region
   cloud_run_service_name = google_cloud_run_v2_service.public.name
@@ -352,7 +354,7 @@ locals {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "internal_invokers" {
-  for_each = toset(local.internal_invokers)
+  for_each = { for index, email in local.internal_invokers : tostring(index) => email }
 
   project  = var.project
   location = var.region
@@ -542,4 +544,13 @@ resource "google_monitoring_alert_policy" "denied_burst" {
   }
 
   notification_channels = [google_monitoring_notification_channel.email[0].id]
+}
+
+resource "google_iap_web_cloud_run_service_iam_member" "individual_users" {
+  for_each               = toset(var.users)
+  project                = var.project
+  location               = var.region
+  cloud_run_service_name = google_cloud_run_v2_service.public.name
+  role                   = "roles/iap.httpsResourceAccessor"
+  member                 = "user:${each.value}"
 }

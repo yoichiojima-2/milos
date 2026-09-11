@@ -159,3 +159,35 @@ async def test_inspect_endpoint(internal, session, clock):
 async def test_terminate_over_http(public, session):
     response = await public.post(f"/v1/sessions/{session.session_id}/terminate", headers=as_user("alice@example.com"))
     assert response.json()["status"] == "terminated"
+
+
+async def test_explicit_user_access_still_requires_verified_identity(public, service):
+    from .conftest import definition
+
+    await service.publish(definition(allowed_groups=[], allowed_users=["owner@gmail.com"]))
+    body = {"agent_id": "analyst", "message": "hi", "client_request_id": "personal"}
+    assert (await public.post("/v1/sessions", json=body)).status_code == 401
+    assert (await public.post("/v1/sessions", json=body, headers=as_user("other@gmail.com"))).status_code == 403
+    rejected = await public.post(
+        "/v1/sessions", json=body | {"approvers": ["other@gmail.com"]}, headers=as_user("owner@gmail.com")
+    )
+    assert rejected.status_code == 403
+    created = await public.post("/v1/sessions", json=body, headers=as_user("owner@gmail.com"))
+    assert created.status_code == 201 and created.json()["operator"] == "owner@gmail.com"
+
+
+async def test_explicit_user_cannot_approve_own_session(public, service):
+    from .conftest import definition
+
+    await service.publish(definition(allowed_groups=[], allowed_users=["owner@gmail.com"]))
+    session = await service.create_session("analyst", "hi", operator="owner@gmail.com", client_request_id="self")
+    assert session.lease is not None
+    await service.permit(
+        session.session_id, lease_token=session.lease.token, tool_use_id="shell", tool_name="Bash", args={"command": "ls"}
+    )
+    response = await public.post(
+        f"/v1/sessions/{session.session_id}/approvals",
+        json={"tool_use_id": "shell", "decision": "allow"},
+        headers=as_user("owner@gmail.com"),
+    )
+    assert response.status_code == 403

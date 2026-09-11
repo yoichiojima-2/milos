@@ -94,3 +94,44 @@ async def test_api_permission_check_calls_internal_api():
     assert await check.permitted("sess_1.sig", "mcp__egress__web_fetch", {"url": "https://x"}) is True
     assert seen["path"] == "/internal/sessions/sess_1/permissions"
     assert seen["params"]["tool_name"] == "mcp__egress__web_fetch" and seen["session"] == "sess_1.sig"
+
+
+async def test_runner_connector_url_reaches_the_mcp_transport():
+    from milos.runner import Gate, build_options
+    from milos.settings import RunnerSettings
+
+    from .conftest import definition
+
+    settings = RunnerSettings(
+        session_id="test",
+        session_token="test.sig",
+        lease_token="lease",
+        api_url="http://api",
+        project="test",
+        connector_urls={"egress": "http://egress"},
+    )
+    options = build_options(
+        definition(connectors=["egress"]),
+        settings,
+        Gate(None),
+        resume=None,
+        connector_headers={"egress": {"Authorization": "Bearer identity"}},
+    )
+    config = options.mcp_servers["egress"]
+    app = connector.egress(Check(allow=True)).app()
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
+        response = await client.post(
+            config["url"],
+            headers={"Accept": "application/json, text/event-stream"},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "deployment-test", "version": "1"},
+                },
+            },
+        )
+    assert response.status_code == 200 and '"serverInfo"' in response.text

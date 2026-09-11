@@ -20,11 +20,14 @@ jobs:
 
   terraform:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, existing-project]
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.13.3"
       - run: terraform fmt -recursive -check infra
-      - run: terraform -chdir=infra/envs/dev init -backend=false -input=false
-      - run: terraform -chdir=infra/envs/dev validate
+      - run: terraform -chdir=infra/envs/${{ matrix.environment }} init -backend=false -input=false
+      - run: terraform -chdir=infra/envs/${{ matrix.environment }} validate
