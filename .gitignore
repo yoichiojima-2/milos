@@ -12,3 +12,6 @@ terraform.tfstate*
 .env
 
 infra/**/terraform.tfvars
+
+# saved plans
+*.tfplan

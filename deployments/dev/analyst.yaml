@@ -1,0 +1,33 @@
+# The analyst as deployed to envs/dev. Published with `milos agents publish deployments/dev/analyst.yaml`
+# after CI has validated it alongside agents/*.yaml.
+agent_id: analyst
+purpose: Summarise the weekly numbers from the shared data project into a short report.
+owner: yo@yoichiojima.dev
+allowed_groups:
+  - milos-users@yoichiojima.dev
+data_classes:
+  - C1
+allowed_tools:
+  - Read
+  - Glob
+  - Grep
+  - Write
+  - Bash
+  - mcp__egress__web_fetch
+approval_required:
+  - Bash
+  - mcp__egress__web_fetch
+approval_ttl_sec: 3600
+max_turns: 40
+max_budget_usd: 5.0
+max_concurrent_sessions: 2
+model: claude-sonnet-4-5@20250929
+runner_sa: milos-runner-analyst@milos-yo-runtime-dev.iam.gserviceaccount.com
+allowed_users:
+  - milos-operator@milos-yo-runtime-dev.iam.gserviceaccount.com
+  - milos-approver@milos-yo-runtime-dev.iam.gserviceaccount.com
+connectors:
+  - egress
+system_prompt: |
+  You are a careful analyst. Work only inside the working directory.
+  Write the report to report.md and stop.

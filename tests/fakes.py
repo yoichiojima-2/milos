@@ -40,7 +40,14 @@ class FakeTransaction:
         self._docs = docs
         self._writes: list[tuple[str, str, dict[str, Any]]] = []
 
+    def _reading(self) -> None:
+        # Firestore transactions read first, then write; a read after a write
+        # raises ReadAfterWriteError on the real client.
+        if self._writes:
+            raise RuntimeError("read after write in transaction")
+
     async def get(self, path: str) -> dict[str, Any] | None:
+        self._reading()
         doc = self._docs.get(path)
         return copy.deepcopy(doc) if doc is not None else None
 
@@ -53,6 +60,7 @@ class FakeTransaction:
         descending: bool = False,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
+        self._reading()
         prefix = collection.strip("/") + "/"
         rows = [
             copy.deepcopy(doc)

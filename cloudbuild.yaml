@@ -1,0 +1,15 @@
+# Build the one image. Run from the repository root:
+#   gcloud builds submit --config cloudbuild.yaml --substitutions _TAG=$(git rev-parse --short HEAD) \
+#     --service-account projects/<runtime>/serviceAccounts/milos-build@<runtime>.iam.gserviceaccount.com \
+#     --gcs-source-staging-dir gs://<runtime>-build-source/source
+# Logs go to Cloud Logging only, so the build identity needs no log bucket.
+substitutions:
+  _REGION: asia-northeast1
+  _TAG: latest
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/milos/milos:${_TAG}", "."]
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/milos/milos:${_TAG}
+options:
+  logging: CLOUD_LOGGING_ONLY

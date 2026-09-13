@@ -97,3 +97,15 @@ variable "users" {
   type        = list(string)
   default     = []
 }
+
+variable "operator_service_accounts" {
+  description = "Service accounts allowed through IAP to the public API, for CLI use where user tokens are not accepted (Google-managed OAuth client). Agent definitions must also allow them."
+  type        = list(string)
+  default     = []
+}
+
+variable "image_puller_project_numbers" {
+  description = "Other projects whose Cloud Run services run this image; their Cloud Run service agents may read the registry."
+  type        = list(string)
+  default     = []
+}

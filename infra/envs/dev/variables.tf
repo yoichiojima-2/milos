@@ -77,3 +77,9 @@ variable "perimeter_admins" {
   type    = list(string)
   default = []
 }
+
+variable "prefix" {
+  description = "Project id prefix; project ids are global, so pick one nobody else has."
+  type        = string
+  default     = "milos"
+}
