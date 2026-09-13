@@ -18,7 +18,7 @@ from .audit import CloudAuditLog, StderrAuditLog
 from .auth import IAP_HEADER, CloudIdentityDirectory, Directory, IapVerifier, Principal, SessionTokens
 from .errors import Forbidden, MilosError, Unauthorized
 from .jobs import CloudRunJobs, NoJobs
-from .models import Agent, AgentVersion, Approval, Event, EventType, Session, StopReason, ToolDecision
+from .models import AgentVersion, Approval, Event, EventType, Published, Session, StopReason, ToolDecision
 from .service import RunnerEvent, Service
 from .settings import ApiSettings
 from .store import FirestoreStore
@@ -72,11 +72,6 @@ class Snapshot(BaseModel):
 
 class Finish(BaseModel):
     stop_reason: StopReason
-
-
-class Published(BaseModel):
-    agent: Agent
-    version: AgentVersion
 
 
 class RunnerContext(BaseModel):

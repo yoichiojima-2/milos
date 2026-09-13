@@ -8,7 +8,7 @@ from httpx import ASGITransport
 from milos import snapshots
 from milos.api import create_app
 from milos.auth import IAP_HEADER
-from milos.client import Client
+from milos.client import ApiError, Client
 
 from .fakes import FakeBlobs
 from .test_api import FakeIap
@@ -52,7 +52,7 @@ async def test_client_drives_a_session(client, agent, service):
     events = await client.events(session.session_id)
     assert [e.type.value for e in events][-1] == "user.message"
     assert [s.session_id for s in await client.sessions()] == [session.session_id]
-    with pytest.raises(RuntimeError, match="403"):
+    with pytest.raises(ApiError, match="403"):
         await client.confirm(session.session_id, "nope", "allow")
     assert (await client.terminate(session.session_id)).status.value == "terminated"
     seen = [e.seq async for e in client.follow(session.session_id)]

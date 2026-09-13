@@ -98,6 +98,15 @@ class AgentVersion(Document):
     published_at: datetime
 
 
+class Published(BaseModel):
+    """An agent with its latest version, as the public API returns it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent: Agent
+    version: AgentVersion
+
+
 # --- sessions ---------------------------------------------------------------
 
 

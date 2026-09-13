@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from . import definitions
 from .audit import StderrAuditLog
 from .auth import SessionTokens
-from .client import Client, id_token
+from .client import Client
 from .errors import Invalid, MilosError
 from .jobs import NoJobs
 from .models import Event, EventType
@@ -25,10 +25,10 @@ from .store import FirestoreStore
 
 
 def _client() -> Client:
-    url = os.environ.get("MILOS_API_URL")
-    if not url:
-        raise SystemExit("MILOS_API_URL is not set")
-    return Client(url, token=id_token(os.environ.get("MILOS_IAP_CLIENT_ID")))
+    try:
+        return Client.from_env()
+    except KeyError as error:
+        raise SystemExit(f"{error.args[0]} is not set") from None
 
 
 def _service() -> Service:
@@ -101,7 +101,7 @@ async def cmd_sessions(_: argparse.Namespace) -> int:
 async def cmd_confirm(args: argparse.Namespace) -> int:
     async with _client() as client:
         approval = await client.confirm(args.session, args.tool_use_id, args.decision)
-    print(f"{approval['decision']} by {approval['decided_by']}")
+    print(f"{approval.decision} by {approval.decided_by}")
     return 0
 
 

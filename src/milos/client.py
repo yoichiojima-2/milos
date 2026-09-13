@@ -15,7 +15,7 @@ from typing import Any, Self
 import httpx
 from pydantic import BaseModel
 
-from .models import Event, Session, SessionStatus, ToolDecision
+from .models import Approval, Event, Published, Session, SessionStatus, ToolDecision
 
 
 def id_token(audience: str | None = None) -> str:
@@ -23,6 +23,15 @@ def id_token(audience: str | None = None) -> str:
         return token
     cmd = ["gcloud", "auth", "print-identity-token", *([f"--audiences={audience}"] if audience else [])]
     return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+class ApiError(RuntimeError):
+    """The API answered with an error status; `status` and `detail` carry the response."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(f"{status}: {detail}")
+        self.status = status
+        self.detail = detail
 
 
 def _request_id(client_request_id: str | None) -> dict[str, str]:
@@ -35,6 +44,17 @@ class Client:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         self._http = httpx.AsyncClient(base_url=base_url.rstrip("/"), headers=headers, transport=transport, timeout=30)
 
+    @classmethod
+    def from_env(cls) -> Self:
+        """Build a client from `MILOS_API_URL` and, for the token, `MILOS_ID_TOKEN` or `MILOS_IAP_CLIENT_ID`.
+
+        Raises `KeyError` naming the variable when `MILOS_API_URL` is missing.
+        """
+        url = os.environ.get("MILOS_API_URL")
+        if not url:
+            raise KeyError("MILOS_API_URL")
+        return cls(url, token=id_token(os.environ.get("MILOS_IAP_CLIENT_ID")))
+
     async def __aenter__(self) -> Self:
         return self
 
@@ -45,7 +65,7 @@ class Client:
         response = await self._http.request(method, f"/v1{path}", **kwargs)
         if response.status_code >= 400:
             detail = response.json().get("detail", response.text) if response.content else ""
-            raise RuntimeError(f"{response.status_code}: {detail}")
+            raise ApiError(response.status_code, detail)
         return response.json()
 
     async def _one[M: BaseModel](self, model: type[M], method: str, path: str, **kwargs: Any) -> M:
@@ -54,9 +74,8 @@ class Client:
     async def _many[M: BaseModel](self, model: type[M], method: str, path: str, **kwargs: Any) -> list[M]:
         return [model.model_validate(item) for item in await self._call(method, path, **kwargs)]
 
-    async def agents(self) -> list[dict[str, Any]]:
-        agents: list[dict[str, Any]] = await self._call("GET", "/agents")
-        return agents
+    async def agents(self) -> list[Published]:
+        return await self._many(Published, "GET", "/agents")
 
     async def create_session(
         self,
@@ -86,10 +105,9 @@ class Client:
     async def interrupt(self, session_id: str) -> Event:
         return await self._one(Event, "POST", f"/sessions/{session_id}/interrupt", json={})
 
-    async def confirm(self, session_id: str, tool_use_id: str, decision: ToolDecision) -> dict[str, Any]:
+    async def confirm(self, session_id: str, tool_use_id: str, decision: ToolDecision) -> Approval:
         body = {"tool_use_id": tool_use_id, "decision": decision}
-        approval: dict[str, Any] = await self._call("POST", f"/sessions/{session_id}/approvals", json=body)
-        return approval
+        return await self._one(Approval, "POST", f"/sessions/{session_id}/approvals", json=body)
 
     async def terminate(self, session_id: str) -> Session:
         return await self._one(Session, "POST", f"/sessions/{session_id}/terminate")
