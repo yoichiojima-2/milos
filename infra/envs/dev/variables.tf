@@ -83,3 +83,9 @@ variable "prefix" {
   type        = string
   default     = "milos"
 }
+
+variable "direct_anthropic_api" {
+  description = "Development only: runners call the Anthropic API (secret `anthropic-api-key`) through a NAT instead of Vertex AI."
+  type        = bool
+  default     = false
+}

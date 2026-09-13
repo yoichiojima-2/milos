@@ -109,3 +109,9 @@ variable "image_puller_project_numbers" {
   type        = list(string)
   default     = []
 }
+
+variable "direct_anthropic_api" {
+  description = "Development only: runners call the Anthropic API with the key in Secret Manager secret `anthropic-api-key` instead of Vertex AI. Requires internet egress on the network."
+  type        = bool
+  default     = false
+}

@@ -62,6 +62,8 @@ module "network" {
   project = module.foundation.project_ids.runtime
   region  = var.region
 
+  internet_egress_service_accounts = var.direct_anthropic_api ? local.runner_service_accounts : []
+
   depends_on = [module.foundation]
 }
 
@@ -111,6 +113,7 @@ module "runtime" {
   connector_urls               = module.egress.connector_urls
   extra_internal_invokers      = module.egress.service_accounts
   image_puller_project_numbers = [module.foundation.project_numbers.egress]
+  direct_anthropic_api         = var.direct_anthropic_api
   schedules                    = var.schedules
   alert_email                  = var.alert_email
 

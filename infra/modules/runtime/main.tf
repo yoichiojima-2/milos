@@ -470,6 +470,29 @@ resource "google_cloud_run_v2_service_iam_member" "internal_invokers" {
   member   = "serviceAccount:${each.value}"
 }
 
+# --- development only: the Anthropic API key for runners ---------------------------
+# Terraform creates the secret; a person adds the version:
+#   gcloud secrets versions add anthropic-api-key --project <runtime> --data-file=-
+
+resource "google_secret_manager_secret" "anthropic_api_key" {
+  count     = var.direct_anthropic_api ? 1 : 0
+  project   = var.project
+  secret_id = "anthropic-api-key"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "runner_anthropic_api_key" {
+  for_each = var.direct_anthropic_api ? toset(var.agent_ids) : toset([])
+
+  project   = var.project
+  secret_id = google_secret_manager_secret.anthropic_api_key[0].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runner[each.value].email}"
+}
+
 # --- runner jobs: one per agent, each under its own identity ------------------------
 
 resource "google_cloud_run_v2_job" "runner" {
@@ -501,6 +524,19 @@ resource "google_cloud_run_v2_job" "runner" {
           content {
             name  = env.key
             value = env.value
+          }
+        }
+
+        dynamic "env" {
+          for_each = var.direct_anthropic_api ? [1] : []
+          content {
+            name = "ANTHROPIC_API_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.anthropic_api_key[0].secret_id
+                version = "latest"
+              }
+            }
           }
         }
       }

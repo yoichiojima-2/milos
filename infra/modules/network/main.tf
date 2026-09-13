@@ -145,3 +145,46 @@ resource "google_compute_network_firewall_policy_rule" "deny_egress" {
     }
   }
 }
+
+# --- development only: internet egress for named identities -------------------------
+# The design gives the sandbox no route to the internet. This block exists for
+# development against the Anthropic API when Vertex AI quota is not yet granted;
+# it is off unless `internet_egress_service_accounts` is set, and the
+# first-deploy check "curl to the internet must fail" does not hold while it is on.
+
+resource "google_compute_router" "dev" {
+  count   = length(var.internet_egress_service_accounts) > 0 ? 1 : 0
+  project = var.project
+  name    = "${var.name}-dev"
+  region  = var.region
+  network = google_compute_network.this.id
+}
+
+resource "google_compute_router_nat" "dev" {
+  count                              = length(var.internet_egress_service_accounts) > 0 ? 1 : 0
+  project                            = var.project
+  name                               = "${var.name}-dev"
+  region                             = var.region
+  router                             = google_compute_router.dev[0].name
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+}
+
+resource "google_compute_network_firewall_policy_rule" "dev_https_egress" {
+  count                   = length(var.internet_egress_service_accounts) > 0 ? 1 : 0
+  project                 = var.project
+  firewall_policy         = google_compute_network_firewall_policy.this.name
+  description             = "Development only: HTTPS to the internet for the listed identities"
+  priority                = 300
+  direction               = "EGRESS"
+  action                  = "allow"
+  target_service_accounts = var.internet_egress_service_accounts
+
+  match {
+    dest_ip_ranges = ["0.0.0.0/0"]
+    layer4_configs {
+      ip_protocol = "tcp"
+      ports       = ["443"]
+    }
+  }
+}
