@@ -115,3 +115,9 @@ variable "direct_anthropic_api" {
   type        = bool
   default     = false
 }
+
+variable "data_bucket" {
+  description = "Bucket in the data project the internal connector reads (its list_files/read_file tools). Null registers no data tools."
+  type        = string
+  default     = null
+}

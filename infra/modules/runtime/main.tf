@@ -571,6 +571,14 @@ resource "google_cloud_run_v2_service" "connector" {
         name  = "MILOS_API_URL"
         value = local.internal_url
       }
+
+      dynamic "env" {
+        for_each = var.data_bucket == null ? [] : [var.data_bucket]
+        content {
+          name  = "MILOS_DATA_BUCKET"
+          value = env.value
+        }
+      }
     }
 
     vpc_access {

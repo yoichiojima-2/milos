@@ -13,6 +13,7 @@ only, a bounded number of redirects, a bounded response, every URL journaled
 through the permission it consumed.
 """
 
+import asyncio
 import inspect
 import ipaddress
 import os
@@ -137,12 +138,74 @@ def egress(check: PermissionCheck) -> Connector:
     return connector
 
 
-def internal(check: PermissionCheck) -> Connector:
-    """Data-side tools are registered per deployment; the shell is the same."""
-    return Connector("internal", check)
+# --- the internal connector's data tools ----------------------------------------------
+
+MAX_LIST = 200
+MAX_FILE_BYTES = 200_000
+
+
+class DataFiles(Protocol):
+    """Read-only view of the approved data bucket."""
+
+    async def list(self, prefix: str) -> list[str]: ...
+
+    async def read(self, path: str) -> bytes | None: ...
+
+
+class GcsDataFiles:
+    def __init__(self, bucket: str, *, project: str | None = None) -> None:
+        # Deferred: google-cloud-storage is only needed on Cloud Run.
+        from google.cloud import storage  # type: ignore[attr-defined]
+
+        self._bucket = storage.Client(project=project).bucket(bucket)
+
+    async def list(self, prefix: str) -> list[str]:
+        def run() -> list[str]:
+            return [blob.name for blob in self._bucket.list_blobs(prefix=prefix, max_results=MAX_LIST)]
+
+        return await asyncio.to_thread(run)
+
+    async def read(self, path: str) -> bytes | None:
+        def run() -> bytes | None:
+            blob = self._bucket.blob(path)
+            if not blob.exists():
+                return None
+            return cast(bytes, blob.download_as_bytes(start=0, end=MAX_FILE_BYTES - 1))
+
+        return await asyncio.to_thread(run)
+
+
+def check_path(path: str) -> str:
+    if not path or path.startswith("/") or ".." in path.split("/"):
+        raise Forbidden("paths are relative and stay inside the data bucket")
+    return path
+
+
+def internal(check: PermissionCheck, *, data: DataFiles | None = None) -> Connector:
+    """Read-only tools over the approved data bucket. Without a bucket the connector has no tools."""
+    connector = Connector("internal", check)
+    if data is None:
+        return connector
+
+    @connector.tool
+    async def list_files(prefix: str = "") -> list[str]:
+        """List files in the shared data project under a prefix (at most 200)."""
+        return await data.list(check_path(prefix) if prefix else "")
+
+    @connector.tool
+    async def read_file(path: str) -> str:
+        """Read one text file from the shared data project (at most 200 kB)."""
+        body = await data.read(check_path(path))
+        if body is None:
+            raise Forbidden(f"no such file: {path}")
+        return body.decode("utf-8", errors="replace")
+
+    return connector
 
 
 def build_from_env(name: str) -> Any:
     check = ApiPermissionCheck(os.environ["MILOS_API_URL"], identity=GoogleIdentity())
-    connector = egress(check) if name == "egress" else internal(check)
-    return connector.app()
+    if name == "egress":
+        return egress(check).app()
+    bucket = os.environ.get("MILOS_DATA_BUCKET")
+    return internal(check, data=GcsDataFiles(bucket) if bucket else None).app()

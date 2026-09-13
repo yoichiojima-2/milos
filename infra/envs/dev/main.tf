@@ -114,8 +114,11 @@ module "runtime" {
   extra_internal_invokers      = module.egress.service_accounts
   image_puller_project_numbers = [module.foundation.project_numbers.egress]
   direct_anthropic_api         = var.direct_anthropic_api
-  schedules                    = var.schedules
-  alert_email                  = var.alert_email
+  # The data module's bucket name is deterministic; naming it avoids a module cycle
+  # (data grants the connector identity read access).
+  data_bucket = "${module.foundation.project_ids.data}-data"
+  schedules   = var.schedules
+  alert_email = var.alert_email
 
   depends_on = [module.foundation]
 }
