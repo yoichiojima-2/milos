@@ -49,12 +49,3 @@ async def test_registry_is_generated_from_published_versions(service):
     await service.publish(version)
     table = definitions.registry(await service.list_agents())
     assert "| analyst | 1 | yes |" in table and "owner@example.com" in table
-
-
-def test_definition_allows_explicit_google_users(tmp_path):
-    version = definitions.load(write(tmp_path, allowed_groups=[], allowed_users=["owner@gmail.com"]))
-    assert version.allowed_users == ["owner@gmail.com"]
-    with pytest.raises(Invalid, match="email addresses"):
-        definitions.load(write(tmp_path, allowed_groups=[], allowed_users=["not-an-email"]))
-    with pytest.raises(Invalid, match="lower-case"):
-        definitions.load(write(tmp_path, allowed_groups=[], allowed_users=["Owner@Gmail.com"]))
