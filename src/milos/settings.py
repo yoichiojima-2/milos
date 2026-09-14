@@ -37,6 +37,8 @@ class ApiSettings:
     snapshot_bucket: str = ""
     connector_urls: dict[str, str] = field(default_factory=dict)
     vertex_region: str = "us-east5"
+    admin_group: str | None = None  # members may publish, enable and disable definitions
+    scheduler_sa: str | None = None  # the only identity that may create scheduled sessions and run inspection
     dev_user: str | None = None  # local development only: trust this email without IAP
 
     @classmethod
@@ -52,6 +54,8 @@ class ApiSettings:
             snapshot_bucket=_env("MILOS_SNAPSHOT_BUCKET", ""),
             connector_urls=_connector_urls(),
             vertex_region=_env("MILOS_VERTEX_REGION", "us-east5"),
+            admin_group=os.environ.get("MILOS_ADMIN_GROUP"),
+            scheduler_sa=os.environ.get("MILOS_SCHEDULER_SA"),
             dev_user=os.environ.get("MILOS_DEV_USER"),
         )
 

@@ -39,8 +39,8 @@ async def test_snapshot_round_trip(tmp_path: Path):
 
 
 @pytest.fixture
-def client(service, tokens, directory):
-    app = create_app(service, role="public", tokens=tokens, iap=FakeIap(), directory=directory)
+def client(service, tokens, access):
+    app = create_app(service, role="public", tokens=tokens, verifier=FakeIap(), access=access)
     c = Client("http://public", transport=ASGITransport(app=app))
     c._http.headers[IAP_HEADER] = "alice@example.com"
     return c

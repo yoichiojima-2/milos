@@ -361,6 +361,10 @@ class NewApproval(Wire):
     verdict: Verdict
 
 
+class AgentPatch(Wire):
+    enabled: bool
+
+
 class PermissionRequest(Wire):
     """The runner's `PreToolUse` question."""
 

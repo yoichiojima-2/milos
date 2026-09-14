@@ -31,8 +31,8 @@ OPERATOR, APPROVER = "alice@example.com", "bob@example.com"
 
 
 @pytest.fixture
-def app(service, tokens, directory):
-    return create_app(service, role="public", tokens=tokens, iap=FakeIap(), directory=directory)
+def app(service, tokens, access):
+    return create_app(service, role="public", tokens=tokens, verifier=FakeIap(), access=access)
 
 
 def as_user(app, email: str) -> Client:

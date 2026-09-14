@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from httpx import ASGITransport
 
+from milos.access import Access
 from milos.api import create_app
 from milos.control import Control
 from milos.models import EventType, SessionStatus, StopReason, Verdict
@@ -111,7 +112,7 @@ def blobs() -> FakeBlobs:
 
 
 def make_run(service, tokens, session, sdk, blobs, tmp_path: Path, monkeypatch) -> Run:
-    app = create_app(service, role="internal", tokens=tokens)
+    app = create_app(service, role="internal", tokens=tokens, access=Access(None))
     control = Control(
         "http://internal",
         session_id=session.session_id,

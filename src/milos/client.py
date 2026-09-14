@@ -15,6 +15,9 @@ import httpx
 
 from .http import Api, ApiError, id_token
 from .models import (
+    Agent,
+    AgentPatch,
+    AgentVersion,
     Approval,
     Event,
     NewApproval,
@@ -55,6 +58,14 @@ class Client(Api):
 
     async def agents(self) -> list[Published]:
         return await self.many(Published, "GET", "/agents")
+
+    async def publish(self, version: AgentVersion) -> AgentVersion:
+        """Publish a validated definition as the agent's next version (admin group only)."""
+        return await self.one(AgentVersion, "POST", "/agents", json=version.model_dump(mode="json"))
+
+    async def set_enabled(self, agent_id: str, enabled: bool) -> Agent:
+        """Enable or disable an agent (admin group only); disabling stops every session at its next tool request."""
+        return await self.one(Agent, "PATCH", f"/agents/{agent_id}", json=AgentPatch(enabled=enabled).model_dump())
 
     async def create_session(
         self,

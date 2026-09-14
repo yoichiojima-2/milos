@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from milos.access import Access
 from milos.auth import SessionTokens
 from milos.models import AgentVersion
 from milos.service import Service
@@ -63,7 +64,12 @@ def jobs() -> FakeJobs:
 
 @pytest.fixture
 def directory() -> FakeDirectory:
-    return FakeDirectory({"analysts@example.com": ["*@example.com"]})
+    return FakeDirectory({"analysts@example.com": ["*@example.com"], "admins@example.com": ["admin@example.com"]})
+
+
+@pytest.fixture
+def access(directory) -> Access:
+    return Access(directory, admin_group="admins@example.com")
 
 
 @pytest.fixture
