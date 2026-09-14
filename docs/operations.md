@@ -74,4 +74,4 @@ FIRESTORE_EMULATOR_HOST=localhost:8080 uv run milos serve api --port 8080
 MILOS_API_URL=http://localhost:8080 MILOS_ID_TOKEN=x uv run milos run analyst "hello"
 ```
 
-With `MILOS_DEV_USER` set, the API trusts that email, logs audit entries to stderr, and creates sessions without launching jobs. A runner can be started by hand against the internal role of the same API with the session and lease tokens printed by the job launcher.
+With `MILOS_DEV_USER` set, the API trusts that email, logs audit entries to stderr, and creates sessions without launching jobs. Each new session prints the environment a runner job would receive, tokens included, to the API's stderr; export it and `uv run python -m milos.runner` against the internal role of the same API to run one by hand.

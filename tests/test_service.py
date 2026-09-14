@@ -383,6 +383,17 @@ async def test_publish_increments_version(service):
     assert agent.latest_version == 2 and latest.purpose == "v2"
 
 
+async def test_local_launcher_prints_the_runner_environment(capsys):
+    from milos.jobs import NoJobs
+
+    assert (
+        await NoJobs().launch("sess_1", agent_id="analyst", env={"MILOS_LEASE_TOKEN": "lt", "MILOS_SESSION_TOKEN": "st"})
+        == "local-sess_1"
+    )
+    err = capsys.readouterr().err
+    assert "MILOS_SESSION_TOKEN=st" in err and "MILOS_LEASE_TOKEN=lt" in err
+
+
 async def test_list_sessions_by_approver(service, agent):
     mine = await service.create_session(
         "analyst", "hi", operator="alice@example.com", client_request_id="r1", approvers=["lead@example.com"]

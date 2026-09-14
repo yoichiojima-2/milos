@@ -7,6 +7,7 @@ dies is restarted by the inspection pass with a fresh lease, never by Cloud
 Run itself, so an execution with side effects is never silently duplicated.
 """
 
+import sys
 from typing import Protocol
 
 
@@ -42,7 +43,14 @@ class CloudRunJobs:
 
 
 class NoJobs:
-    """For the API running locally without Cloud Run: sessions are created but never run."""
+    """For the API running locally without Cloud Run: sessions are created but never run.
+
+    The environment a job would receive, tokens included, goes to stderr so a
+    runner can be started by hand against the same API.
+    """
 
     async def launch(self, session_id: str, *, agent_id: str, env: dict[str, str]) -> str:
+        print(f"no job launched for {agent_id}; run one by hand with:", file=sys.stderr)
+        for key, value in sorted(env.items()):
+            print(f"  {key}={value}", file=sys.stderr)
         return f"local-{session_id}"
