@@ -99,6 +99,8 @@ uv run milos agents validate agents/*.yaml deployments/*/*.yaml
 
 The tests drive the real service through the real API with the SDK replaced by a scripted client (`tests/test_runner.py`), so the approval flow, the lease, the stop signal and the snapshot pointer are exercised end to end in memory. Firestore's transaction semantics that matter (create-only documents, dotted updates, rollback) are mirrored by `tests/fakes.py`; run the same suite against the emulator by setting `FIRESTORE_EMULATOR_HOST` before adding Firestore-specific tests.
 
+In a remote Claude Code session, the `gcloud-login` skill in `.claude/skills/` installs gcloud and walks through the sign-in, so the CLI, the Firestore emulator and Terraform work there too.
+
 A local API without GCP:
 
 ```sh
