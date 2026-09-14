@@ -1,6 +1,0 @@
-project       = "milos-20260827"
-region        = "asia-northeast1"
-vertex_region = "us-east5"
-# Built with Cloud Build after the first apply (docs/operations.md); leave unset until then.
-# image         = "asia-northeast1-docker.pkg.dev/milos-20260827/milos/milos:<tag>"
-users         = ["yoichiojima@gmail.com"]

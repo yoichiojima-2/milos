@@ -24,3 +24,11 @@ output "runner_service_accounts" {
   description = "Paste into each definition's runner_sa."
   value       = module.runtime.runner_service_accounts
 }
+
+output "build_service_account" {
+  value = module.runtime.build_service_account
+}
+
+output "build_source_bucket" {
+  value = module.runtime.build_source_bucket
+}

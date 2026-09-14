@@ -102,7 +102,6 @@ class AgentVersion(Document):
     purpose: str
     owner: str
     allowed_groups: list[str]  # Google groups allowed to start sessions
-    allowed_users: list[str] = Field(default_factory=list)  # Explicit Google identities for projects without groups
     data_classes: list[str]
     allowed_tools: list[str]  # platform capabilities; never passed to the SDK as-is
     approval_required: list[str]  # subset of allowed_tools
@@ -128,13 +127,6 @@ class AgentVersion(Document):
     def _owner_email(cls, value: str) -> str:
         return _email(value)
 
-    @field_validator("allowed_users")
-    @classmethod
-    def _users_are_lower_case_emails(cls, users: list[str]) -> list[str]:
-        if any("@" not in u or u != u.strip().lower() for u in users):
-            raise ValueError("must contain lower-case email addresses")
-        return users
-
     @field_validator("runner_sa")
     @classmethod
     def _runner_sa_is_service_account(cls, value: str) -> str:
@@ -158,8 +150,8 @@ class AgentVersion(Document):
     @model_validator(mode="after")
     def _fields_agree(self) -> "AgentVersion":
         problems = []
-        if not self.allowed_groups and not self.allowed_users:
-            problems.append("allowed_groups must name at least one group or allowed_users must name a user")
+        if not self.allowed_groups:
+            problems.append("allowed_groups must name at least one group")
         for tool in self.approval_required:
             if not any(fnmatch.fnmatchcase(tool, p) or tool == p for p in self.allowed_tools):
                 problems.append(f"approval_required entry {tool} is not in allowed_tools")

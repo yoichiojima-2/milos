@@ -42,6 +42,17 @@ class ApiError(RuntimeError):
         self.detail = detail
 
 
+def _detail(response: httpx.Response) -> str:
+    """The API's `detail`, or a short description when the body is not the API's (an IAP or Cloud Run error page)."""
+    if response.status_code in (401, 403) and "text/html" in response.headers.get("content-type", ""):
+        return "not authorised at the edge; set MILOS_IAP_CLIENT_ID (or MILOS_ID_TOKEN) so the client sends an identity token"
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text.strip()[:200] or response.reason_phrase
+    return str(body.get("detail", body)) if isinstance(body, dict) else str(body)
+
+
 def _request_id(client_request_id: str | None) -> dict[str, str]:
     """Omitted keys get a fresh id from the API; passing one makes the request retry-safe."""
     return {"client_request_id": client_request_id} if client_request_id else {}
@@ -72,8 +83,7 @@ class Client:
     async def _call(self, method: str, path: str, **kwargs: Any) -> Any:
         response = await self._http.request(method, f"/v1{path}", **kwargs)
         if response.status_code >= 400:
-            detail = response.json().get("detail", response.text) if response.content else ""
-            raise ApiError(response.status_code, detail)
+            raise ApiError(response.status_code, _detail(response))
         return response.json()
 
     async def _one[M: BaseModel](self, model: type[M], method: str, path: str, **kwargs: Any) -> M:
@@ -121,11 +131,15 @@ class Client:
     async def terminate(self, session_id: str) -> Session:
         return await self._one(Session, "POST", f"/sessions/{session_id}/terminate")
 
-    async def follow(self, session_id: str, *, after: int = 0, interval: float = 2.0) -> AsyncIterator[Event]:
-        """Yield events as they appear until the session is terminated or idle for something other than approval.
+    async def follow(
+        self, session_id: str, *, after: int = 0, interval: float = 2.0, through_approvals: bool = True
+    ) -> AsyncIterator[Event]:
+        """Yield events as they appear until the session is terminated or idle.
 
         A session waiting for a person to allow or deny a tool call is not finished: the
-        decision restarts it, so the iterator keeps polling and resumes with the events that follow.
+        decision restarts it, so by default the iterator keeps polling and resumes with the
+        events that follow. A caller that decides those calls itself passes
+        `through_approvals=False` to get control back at the pause.
         """
         while True:
             events = await self.events(session_id, after=after)
@@ -136,7 +150,8 @@ class Client:
                 session = await self.session(session_id)
                 if session.status == SessionStatus.TERMINATED:
                     return
-                if session.status == SessionStatus.IDLE and session.stop_reason != StopReason.REQUIRES_ACTION:
+                waiting = through_approvals and session.stop_reason == StopReason.REQUIRES_ACTION
+                if session.status == SessionStatus.IDLE and not waiting:
                     return
                 await asyncio.sleep(interval)
 

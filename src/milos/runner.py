@@ -140,12 +140,19 @@ def build_options(
         resume=resume,
         mcp_servers=mcp_servers,
         strict_mcp_config=True,
-        env={
-            "CLAUDE_CODE_USE_VERTEX": "1",
-            "CLOUD_ML_REGION": settings.vertex_region,
-            "ANTHROPIC_VERTEX_PROJECT_ID": settings.project,
-        },
+        env=model_env(settings),
     )
+
+
+def model_env(settings: RunnerSettings) -> dict[str, str]:
+    """Where the SDK sends model calls: Vertex AI, or the Anthropic API in development."""
+    if settings.anthropic_api_key:
+        return {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
+    return {
+        "CLAUDE_CODE_USE_VERTEX": "1",
+        "CLOUD_ML_REGION": settings.vertex_region,
+        "ANTHROPIC_VERTEX_PROJECT_ID": settings.project,
+    }
 
 
 def continuation(payload: dict[str, Any]) -> str:

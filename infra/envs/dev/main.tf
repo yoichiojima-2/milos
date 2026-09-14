@@ -51,6 +51,7 @@ module "foundation" {
 
   folder_id       = var.folder_id
   billing_account = var.billing_account
+  prefix          = var.prefix
   env             = local.env
   deletion_policy = "DELETE"
 }
@@ -60,6 +61,8 @@ module "network" {
 
   project = module.foundation.project_ids.runtime
   region  = var.region
+
+  internet_egress_service_accounts = var.direct_anthropic_api ? local.runner_service_accounts : []
 
   depends_on = [module.foundation]
 }
@@ -95,21 +98,27 @@ module "egress" {
 module "runtime" {
   source = "../../modules/runtime"
 
-  project                 = module.foundation.project_ids.runtime
-  project_number          = module.foundation.project_numbers.runtime
-  region                  = var.region
-  firestore_location      = var.region
-  vertex_region           = var.vertex_region
-  image                   = var.image
-  network_id              = module.network.network_id
-  subnet_id               = module.network.subnet_id
-  agent_ids               = var.agent_ids
-  users_group             = var.users_group
-  iap_audience            = var.iap_audience
-  connector_urls          = module.egress.connector_urls
-  extra_internal_invokers = module.egress.service_accounts
-  schedules               = var.schedules
-  alert_email             = var.alert_email
+  project                      = module.foundation.project_ids.runtime
+  project_number               = module.foundation.project_numbers.runtime
+  region                       = var.region
+  firestore_location           = var.region
+  vertex_region                = var.vertex_region
+  image                        = var.image
+  network_id                   = module.network.network_id
+  subnet_id                    = module.network.subnet_id
+  agent_ids                    = var.agent_ids
+  users_group                  = var.users_group
+  operator_service_accounts    = [for sa in google_service_account.operators : sa.email]
+  iap_audience                 = var.iap_audience
+  connector_urls               = module.egress.connector_urls
+  extra_internal_invokers      = module.egress.service_accounts
+  image_puller_project_numbers = [module.foundation.project_numbers.egress]
+  direct_anthropic_api         = var.direct_anthropic_api
+  # The data module's bucket name is deterministic; naming it avoids a module cycle
+  # (data grants the connector identity read access).
+  data_bucket = "${module.foundation.project_ids.data}-data"
+  schedules   = var.schedules
+  alert_email = var.alert_email
 
   depends_on = [module.foundation]
 }

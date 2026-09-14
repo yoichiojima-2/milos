@@ -75,6 +75,9 @@ class RunnerSettings:
     snapshot_bucket: str = ""
     connector_urls: dict[str, str] = field(default_factory=dict)
     vertex_region: str = "us-east5"
+    # Development only: call the Anthropic API directly instead of Vertex AI. The
+    # sandbox network must then allow HTTPS egress (infra: direct_anthropic_api).
+    anthropic_api_key: str | None = None
     work_dir: str = "/work"
     idle_seconds: float = 30  # how long to wait for more input before exiting
     poll_seconds: float = 2
@@ -91,6 +94,7 @@ class RunnerSettings:
             snapshot_bucket=_env("MILOS_SNAPSHOT_BUCKET", ""),
             connector_urls=_connector_urls(),
             vertex_region=_env("MILOS_VERTEX_REGION", "us-east5"),
+            anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
             work_dir=_env("MILOS_WORK_DIR", "/work"),
             idle_seconds=float(_env("MILOS_IDLE_SECONDS", "30")),
             poll_seconds=float(_env("MILOS_POLL_SECONDS", "2")),

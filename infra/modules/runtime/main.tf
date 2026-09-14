@@ -53,9 +53,10 @@ resource "google_firestore_backup_schedule" "weekly" {
   }
 }
 
-# `GET /v1/sessions` lists sessions newest first, by operator or by approver:
-# a filter plus an order on another field needs a composite index. Every other
-# query the service runs is equality-only or single-field.
+# Composite indexes for the queries the service runs; equality-only or
+# single-field queries need none.
+#
+# `GET /v1/sessions` lists an operator's sessions newest first.
 resource "google_firestore_index" "sessions_by_operator" {
   project    = var.project
   database   = google_firestore_database.default.name
@@ -83,6 +84,39 @@ resource "google_firestore_index" "sessions_by_approver" {
   fields {
     field_path = "created_at"
     order      = "DESCENDING"
+  }
+}
+
+# `finish` looks for a queued user message after the consumed sequence:
+# equality on type plus a range on seq.
+resource "google_firestore_index" "events_queued_messages" {
+  project    = var.project
+  database   = google_firestore_database.default.name
+  collection = "events"
+
+  fields {
+    field_path = "type"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "seq"
+    order      = "ASCENDING"
+  }
+}
+
+# Approvals find the tool request by id: two equalities on one collection.
+resource "google_firestore_index" "events_tool_requests" {
+  project    = var.project
+  database   = google_firestore_database.default.name
+  collection = "events"
+
+  fields {
+    field_path = "tool_use_id"
+    order      = "ASCENDING"
+  }
+  fields {
+    field_path = "type"
+    order      = "ASCENDING"
   }
 }
 
@@ -116,6 +150,58 @@ resource "google_artifact_registry_repository" "images" {
   repository_id = var.name
   format        = "DOCKER"
   description   = "milos images, built by CI"
+}
+
+# Cloud Build runs as this identity (`gcloud builds submit --service-account`),
+# staging the source in the bucket below (`--gcs-source-staging-dir`).
+# New organizations grant the Compute default account nothing, so the build
+# needs its own: read the source upload, push the image, write its log.
+resource "google_service_account" "build" {
+  project      = var.project
+  account_id   = "${var.name}-build"
+  display_name = "milos image builds"
+}
+
+resource "google_project_iam_member" "build" {
+  for_each = toset(["roles/logging.logWriter", "roles/artifactregistry.writer"])
+
+  project = var.project
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.build.email}"
+}
+
+resource "google_storage_bucket" "build_source" {
+  project                     = var.project
+  name                        = "${var.project}-build-source" # gcloud builds submit --gcs-source-staging-dir
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = true # only source uploads live here
+
+  lifecycle_rule {
+    condition { age = 7 }
+    action { type = "Delete" }
+  }
+}
+
+resource "google_storage_bucket_iam_member" "build_source" {
+  # Cloud Build checks the bucket itself before reading the upload.
+  for_each = toset(["roles/storage.objectViewer", "roles/storage.legacyBucketReader"])
+
+  bucket = google_storage_bucket.build_source.name
+  role   = each.value
+  member = "serviceAccount:${google_service_account.build.email}"
+}
+
+# Cloud Run in other projects (egress) runs the same image.
+resource "google_artifact_registry_repository_iam_member" "image_pullers" {
+  for_each = toset(var.image_puller_project_numbers)
+
+  project    = var.project
+  location   = var.region
+  repository = google_artifact_registry_repository.images.name
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:service-${each.value}@serverless-robot-prod.iam.gserviceaccount.com"
 }
 
 # Packages reach the sandbox only through these remotes (Private Google Access
@@ -312,12 +398,12 @@ resource "google_cloud_run_v2_service_iam_member" "iap_invokes_public" {
   member   = "serviceAccount:${google_project_service_identity.iap.email}"
 }
 
-# Everyone allowed through IAP: the group (dev) and/or individual accounts
-# (existing-project). Keyed by a stable name so adding one never moves another.
+# Everyone allowed through IAP: the users group plus the operator service
+# accounts (CLI). Keyed by a stable name so adding one never moves another.
 locals {
   iap_accessors = merge(
-    var.users_group == null ? {} : { group = "group:${var.users_group}" },
-    { for user in var.users : "user/${user}" => "user:${user}" },
+    { group = "group:${var.users_group}" },
+    { for sa in var.operator_service_accounts : "sa/${sa}" => "serviceAccount:${sa}" },
   )
 }
 
@@ -329,11 +415,6 @@ resource "google_iap_web_cloud_run_service_iam_member" "users" {
   cloud_run_service_name = google_cloud_run_v2_service.public.name
   role                   = "roles/iap.httpsResourceAccessor"
   member                 = each.value
-}
-
-moved {
-  from = google_iap_web_cloud_run_service_iam_member.users
-  to   = google_iap_web_cloud_run_service_iam_member.users["group"]
 }
 
 # --- API, internal: runners, connectors, scheduler ---------------------------------
@@ -398,6 +479,29 @@ resource "google_cloud_run_v2_service_iam_member" "internal_invokers" {
   member   = "serviceAccount:${each.value}"
 }
 
+# --- development only: the Anthropic API key for runners ---------------------------
+# Terraform creates the secret; a person adds the version:
+#   gcloud secrets versions add anthropic-api-key --project <runtime> --data-file=-
+
+resource "google_secret_manager_secret" "anthropic_api_key" {
+  count     = var.direct_anthropic_api ? 1 : 0
+  project   = var.project
+  secret_id = "anthropic-api-key"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "runner_anthropic_api_key" {
+  for_each = var.direct_anthropic_api ? toset(var.agent_ids) : toset([])
+
+  project   = var.project
+  secret_id = google_secret_manager_secret.anthropic_api_key[0].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runner[each.value].email}"
+}
+
 # --- runner jobs: one per agent, each under its own identity ------------------------
 
 resource "google_cloud_run_v2_job" "runner" {
@@ -431,6 +535,19 @@ resource "google_cloud_run_v2_job" "runner" {
             value = env.value
           }
         }
+
+        dynamic "env" {
+          for_each = var.direct_anthropic_api ? [1] : []
+          content {
+            name = "ANTHROPIC_API_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.anthropic_api_key[0].secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
       }
 
       vpc_access {
@@ -462,6 +579,14 @@ resource "google_cloud_run_v2_service" "connector" {
       env {
         name  = "MILOS_API_URL"
         value = local.internal_url
+      }
+
+      dynamic "env" {
+        for_each = var.data_bucket == null ? [] : [var.data_bucket]
+        content {
+          name  = "MILOS_DATA_BUCKET"
+          value = env.value
+        }
       }
     }
 

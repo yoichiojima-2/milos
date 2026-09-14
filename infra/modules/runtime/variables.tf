@@ -45,7 +45,6 @@ variable "agent_ids" {
 variable "users_group" {
   description = "Google group allowed through IAP to the public API."
   type        = string
-  default     = null
 }
 
 variable "iap_audience" {
@@ -92,8 +91,27 @@ variable "alert_email" {
   default = null
 }
 
-variable "users" {
-  description = "Individual Google accounts allowed through IAP. Agent definitions must also allow them."
+
+variable "operator_service_accounts" {
+  description = "Service accounts allowed through IAP to the public API, for CLI use where user tokens are not accepted (Google-managed OAuth client). Agent definitions must also allow them."
   type        = list(string)
   default     = []
+}
+
+variable "image_puller_project_numbers" {
+  description = "Other projects whose Cloud Run services run this image; their Cloud Run service agents may read the registry."
+  type        = list(string)
+  default     = []
+}
+
+variable "direct_anthropic_api" {
+  description = "Development only: runners call the Anthropic API with the key in Secret Manager secret `anthropic-api-key` instead of Vertex AI. Requires internet egress on the network."
+  type        = bool
+  default     = false
+}
+
+variable "data_bucket" {
+  description = "Bucket in the data project the internal connector reads (its list_files/read_file tools). Null registers no data tools."
+  type        = string
+  default     = null
 }

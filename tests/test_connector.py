@@ -143,3 +143,33 @@ async def test_runner_connector_url_reaches_the_mcp_transport():
             },
         )
     assert response.status_code == 200 and '"serverInfo"' in response.text
+
+
+class Files:
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = files
+
+    async def list(self, prefix: str) -> list[str]:
+        return sorted(name for name in self.files if name.startswith(prefix))
+
+    async def read(self, path: str) -> bytes | None:
+        return self.files.get(path)
+
+
+async def test_internal_data_tools_read_only_inside_the_bucket():
+    check = Check(allow=True)
+    c = connector.internal(check, data=Files({"weekly/2026-W36.csv": b"week,revenue\n2026-W36,10\n"}))
+    tools = c.mcp._tool_manager
+    ctx = Ctx({"x-milos-session": "sess_1.sig"})
+
+    assert await tools.get_tool("list_files").fn(ctx, prefix="weekly/") == ["weekly/2026-W36.csv"]
+    assert (await tools.get_tool("read_file").fn(ctx, path="weekly/2026-W36.csv")).startswith("week,revenue")
+    assert check.calls[0][1:] == ("mcp__internal__list_files", {"prefix": "weekly/"})
+    with pytest.raises(Forbidden):
+        await tools.get_tool("read_file").fn(ctx, path="../secrets")
+    with pytest.raises(Forbidden):
+        await tools.get_tool("read_file").fn(ctx, path="weekly/missing.csv")
+
+
+def test_internal_without_a_bucket_has_no_tools():
+    assert connector.internal(Check(allow=True)).mcp._tool_manager.list_tools() == []

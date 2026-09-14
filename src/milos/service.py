@@ -393,9 +393,10 @@ class Service:
         async def tx_fn(tx: Transaction) -> Poll:
             session = await self._leased(tx, session_id, lease_token)
             agent = await self._agent(tx, session.agent_id)
-            tx.update(f"sessions/{session_id}", {"lease.last_poll_at": now, "updated_at": now})
+            # Every read before the write: Firestore rejects a read after a write in a transaction.
             docs = await tx.query(f"sessions/{session_id}/events", where=[("seq", ">", session.consumed_seq)], order_by="seq")
             events = [Event.model_validate(d) for d in docs if d["type"] in USER_EVENTS]
+            tx.update(f"sessions/{session_id}", {"lease.last_poll_at": now, "updated_at": now})
             return Poll(stop=session.status == SessionStatus.TERMINATED or not agent.enabled, events=events)
 
         return await self.store.transaction(tx_fn)

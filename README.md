@@ -63,6 +63,18 @@ milos terminate sess_…                  # ends the session; every later tool r
 
 A session starts running and stops in one of five ways: `end_turn` (idle, restarts on the next message), `requires_action` (a tool call waits for a person), `budget_reached` (the definition's turn or cost limit), `stopped` (terminated, or the agent was disabled), `needs_attention` (a run died twice; inspection gave up). Disabling an agent stops every session at its next tool request or poll.
 
+From Python the same session has the shape of the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk), with the Agent SDK's own message types; the model, its tools and every security decision stay on the platform:
+
+```python
+from milos import MilosOptions, PermissionResultAllow, query
+
+options = MilosOptions(agent="analyst", approvers=["lead@example.com"])
+async for message in query("Summarise last week's numbers.", options):
+    print(message)
+```
+
+`MilosClient` is the `ClaudeSDKClient` counterpart for a conversation, and `can_use_tool` decides parked tool calls from code, as the approver. The walkthrough is [docs/sdk.ipynb](docs/sdk.ipynb).
+
 ## Layout
 
 ```
@@ -83,7 +95,7 @@ src/milos/
   cli.py          `milos`
 agents/           definitions
 infra/            Terraform: modules/{foundation,network,runtime,egress,logging,data,perimeter}, envs/dev
-docs/             design, operations, compliance
+docs/             design, operations, compliance, sdk.ipynb (using the Python client)
 tests/            no GCP needed; fakes.py stands in for every dependency
 ```
 
@@ -94,7 +106,7 @@ uv sync --group dev
 uv run pytest -q                                  # no credentials needed
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                                       # strict on src/milos
-uv run milos agents validate agents/*.yaml deployments/*/*.yaml
+uv run milos agents validate agents/*.yaml
 ```
 
 The tests drive the real service through the real API with the SDK replaced by a scripted client (`tests/test_runner.py`), so the approval flow, the lease, the stop signal and the snapshot pointer are exercised end to end in memory. Firestore's transaction semantics that matter (create-only documents, dotted updates, rollback) are mirrored by `tests/fakes.py`; run the same suite against the emulator by setting `FIRESTORE_EMULATOR_HOST` before adding Firestore-specific tests.

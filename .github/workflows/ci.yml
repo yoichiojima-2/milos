@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [dev, existing-project]
+        environment: [dev]
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3

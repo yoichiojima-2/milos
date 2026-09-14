@@ -56,12 +56,3 @@ def test_all_problems_are_reported_at_once(tmp_path):
         definitions.load(write(tmp_path, max_turns=0, owner="nobody", allowed_tools=["Foo"], purpose=" "))
     message = str(error.value)
     assert all(word in message for word in ("max_turns", "owner", "unknown tool Foo", "purpose"))
-
-
-def test_definition_allows_explicit_google_users(tmp_path):
-    version = definitions.load(write(tmp_path, allowed_groups=[], allowed_users=["owner@gmail.com"]))
-    assert version.allowed_users == ["owner@gmail.com"]
-    with pytest.raises(Invalid, match="email addresses"):
-        definitions.load(write(tmp_path, allowed_groups=[], allowed_users=["not-an-email"]))
-    with pytest.raises(Invalid, match="lower-case"):
-        definitions.load(write(tmp_path, allowed_groups=[], allowed_users=["Owner@Gmail.com"]))
