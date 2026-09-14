@@ -126,7 +126,3 @@ FIRESTORE_EMULATOR_HOST=localhost:8080 uv run milos serve api
 ## Deploy
 
 See [docs/operations.md](docs/operations.md). In short: `terraform apply` in `infra/envs/dev` creates the four projects and everything in them, CI builds the one image, `milos agents publish` publishes definitions through the API as the admin identity, and the first deploy has a short list of things to confirm on real hardware before data with any classification is connected.
-
-## Status
-
-Rewritten in September 2026 from the platform design in the team's Notion. The code is complete for the design's first deployment step; the items the design itself marks as "confirm on real hardware" are listed in [docs/operations.md](docs/operations.md#first-deploy).
