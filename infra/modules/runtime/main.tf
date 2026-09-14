@@ -635,7 +635,7 @@ resource "google_cloud_scheduler_job" "sessions" {
 resource "google_logging_metric" "denied" {
   project = var.project
   name    = "${var.name}/tool_requests_denied"
-  filter  = "logName=\"projects/${var.project}/logs/milos-audit\" AND jsonPayload.decision=\"deny\""
+  filter  = "logName=\"projects/${var.project}/logs/milos-audit\" AND jsonPayload.outcome=\"deny\""
 
   metric_descriptor {
     metric_kind = "DELTA"
