@@ -98,7 +98,7 @@ async def test_can_use_tool_decides_parked_calls_as_the_approver(app, agent, ser
     session = await service.get_session(sid)
     lease = session.lease.token
     decision = await service.permit(sid, lease_token=lease, tool_use_id="t1", tool_name="Bash", args={"command": "rm x"})
-    assert decision.kind == "require_confirmation"
+    assert decision.outcome == "require_approval"
     await service.finish(sid, lease_token=lease, stop_reason=StopReason.REQUIRES_ACTION)
 
     async def resumed_runner():
@@ -118,11 +118,11 @@ async def test_can_use_tool_decides_parked_calls_as_the_approver(app, agent, ser
     assert seen == [("Bash", {"command": "rm x"}, "t1")]
     tool_use = next(m for m in messages if isinstance(m, AssistantMessage) and isinstance(m.content[0], ToolUseBlock))
     assert tool_use.content[0].name == "Bash" and tool_use.content[0].input == {"command": "rm x"}
-    assert any(isinstance(m, SystemMessage) and m.subtype == "user.tool_confirmation" for m in messages)
+    assert any(isinstance(m, SystemMessage) and m.subtype == "user.approval" for m in messages)
     tool_result = next(m for m in messages if isinstance(m, UserMessage) and isinstance(m.content, list))
     assert isinstance(tool_result.content[0], ToolResultBlock) and tool_result.content[0].content == "gone"
     assert isinstance(messages[-1], ResultMessage) and messages[-1].subtype == "success"
-    assert (await service.get_session(sid)).pending_tool_use_ids == []
+    assert (await service.get_session(sid)).pending == []
 
 
 async def test_without_can_use_tool_a_parked_session_ends_the_turn(app, agent, service):

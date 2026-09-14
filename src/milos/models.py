@@ -1,9 +1,8 @@
-"""Firestore document types.
+"""Firestore document types and the API's wire types.
 
 Three objects matter: Agent, Session and Event. AgentVersion belongs to an
-Agent; Lease, Permission and Approval belong to a Session. Every document is
-strict (unknown fields are rejected) and carries a schema version so future
-migrations can tell documents apart.
+Agent; Permission and Approval belong to a Session. Every document is strict:
+unknown fields are rejected.
 
 Collections:
 
@@ -13,6 +12,11 @@ Collections:
       events/{event_id}          append-only; seq is the display order
       permissions/{tool_use_id}  create-only; existence means "permitted"
       approvals/{tool_use_id}    create-only
+    requests/{key}               create-only; one per (actor, client_request_id)
+
+Vocabulary: the runner sends a *permission request* and gets an `Outcome`; an
+`allow` outcome creates a *permission*. A `require_approval` outcome parks the
+session until a person records an *approval* with a `Verdict`.
 """
 
 import fnmatch
@@ -21,7 +25,7 @@ import json
 import secrets
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -36,14 +40,8 @@ def sha256_json(value: Any) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
 class Document(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-    schema_version: int = 1
 
     def doc(self) -> dict[str, Any]:
         """The Firestore representation: enums as strings, datetimes as-is."""
@@ -62,7 +60,20 @@ def _plain(value: Any) -> Any:
             return value
 
 
-type ToolDecision = Literal["allow", "deny"]
+class Outcome(StrEnum):
+    """The API's answer to a permission request."""
+
+    ALLOW = "allow"
+    DENY = "deny"
+    REQUIRE_APPROVAL = "require_approval"
+    STOP = "stop"
+
+
+class Verdict(StrEnum):
+    """What an approver (or the timeout) decided."""
+
+    ALLOW = "allow"
+    DENY = "deny"
 
 
 # --- agents -----------------------------------------------------------------
@@ -194,16 +205,29 @@ class StopReason(StrEnum):
     NEEDS_ATTENTION = "needs_attention"
 
 
-class Lease(Document):
+class Lease(BaseModel):
     """Embedded in Session.lease; not a document of its own.
 
     The token is re-issued on every job start. Every runner write must present
     the current token, so a job that was replaced can no longer write.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     runner_id: str
     token: str
     last_poll_at: datetime
+
+
+class PendingCall(BaseModel):
+    """A tool call parked for approval, embedded in Session.pending."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_use_id: str
+    tool_name: str
+    args_sha256: str
+    event_id: str  # the agent.tool_use event that journaled the request
 
 
 class Session(Document):
@@ -215,16 +239,14 @@ class Session(Document):
     definition_sha256: str
     status: SessionStatus
     stop_reason: StopReason | None = None
-    classification: str  # inherited from the definition's data classes
     operator: str
-    client_request_id: str | None = None  # dedupe key for retried/scheduled creation
-    content_sha256: str | None = None
     viewers: list[str] = Field(default_factory=list)
-    approvers: list[str] = Field(default_factory=list)
+    approvers: list[str] = Field(default_factory=list)  # empty: anyone in the agent's groups but the operator
     lease: Lease | None = None
     snapshot: int = 0  # snapshot number used for restore
     consumed_seq: int = 0  # last user.* event the runner has handled
-    pending_tool_use_ids: list[str] = Field(default_factory=list)
+    last_message_seq: int = 0  # seq of the newest user.message; > consumed_seq means input is waiting
+    pending: list[PendingCall] = Field(default_factory=list)
     approval_expires_at: datetime | None = None  # requires_action deadline
     last_event_seq: int = 0  # seq counter; advanced in the same transaction as the event
     created_at: datetime
@@ -234,7 +256,7 @@ class Session(Document):
 class EventType(StrEnum):
     USER_MESSAGE = "user.message"
     USER_INTERRUPT = "user.interrupt"
-    USER_TOOL_CONFIRMATION = "user.tool_confirmation"
+    USER_APPROVAL = "user.approval"
     AGENT_MESSAGE = "agent.message"
     AGENT_TOOL_USE = "agent.tool_use"
     TOOL_PERMITTED = "tool.permitted"
@@ -243,7 +265,7 @@ class EventType(StrEnum):
     SESSION_STATUS = "session.status"
 
 
-USER_EVENTS = frozenset({EventType.USER_MESSAGE, EventType.USER_INTERRUPT, EventType.USER_TOOL_CONFIRMATION})
+USER_EVENTS = frozenset({EventType.USER_MESSAGE, EventType.USER_INTERRUPT, EventType.USER_APPROVAL})
 RUNNER_EVENTS = frozenset({EventType.AGENT_MESSAGE, EventType.TOOL_RESULT, EventType.SESSION_USAGE})
 
 
@@ -253,9 +275,7 @@ class Event(Document):
     event_id: str
     seq: int  # display order, allocated by the API
     type: EventType
-    actor: str  # verified caller; runners are identified by their lease token
-    client_request_id: str | None = None  # dedupe key for user.* retries
-    content_sha256: str | None = None  # same key with a different body is a conflict
+    actor: str  # verified caller, or "runner", "api", "scheduler", "system:inspection"
     tool_use_id: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
@@ -276,7 +296,7 @@ class Approval(Document):
     """sessions/{session_id}/approvals/{tool_use_id}. Create-only."""
 
     tool_use_id: str
-    decision: ToolDecision
+    verdict: Verdict
     decided_by: str  # from the IAP identity; rejected when equal to the operator
     decided_at: datetime
     expires_at: datetime
@@ -285,13 +305,30 @@ class Approval(Document):
     args_sha256: str  # a re-issued call is matched by content, never by id
 
 
+class Request(Document):
+    """requests/{key}. Create-only: the record of one user request, so a retry returns the same result.
+
+    `key` is `sha256_json([actor, client_request_id])[:32]`; a retry with a different
+    body (`content_sha256`) is a conflict.
+    """
+
+    actor: str
+    client_request_id: str
+    content_sha256: str
+    session_id: str
+    event_id: str | None = None  # the event the request produced; None for session creation
+    created_at: datetime
+
+    @staticmethod
+    def key(actor: str, client_request_id: str) -> str:
+        return sha256_json([actor, client_request_id])[:32]
+
+
 # --- wire types: what the API accepts and returns --------------------------------
 #
 # Shared by `api.py`, `client.py` and `control.py`, so the runner and the CLI never
 # import the service. Bodies that create something carry a `client_request_id`;
 # a caller that wants a retry to be safe passes its own.
-
-type DecisionKind = Literal["allow", "require_confirmation", "deny", "stop"]
 
 
 def _request_id() -> str:
@@ -321,7 +358,7 @@ class NewInterrupt(Wire):
 
 class NewApproval(Wire):
     tool_use_id: str
-    decision: ToolDecision
+    verdict: Verdict
 
 
 class PermissionRequest(Wire):
@@ -333,8 +370,10 @@ class PermissionRequest(Wire):
 
 
 class PermissionAnswer(Wire):
-    outcome: DecisionKind
+    tool_use_id: str
+    outcome: Outcome
     reason: str
+    approval_tool_use_id: str | None = None  # the approval an allow consumed
 
 
 class PermissionLookup(Wire):

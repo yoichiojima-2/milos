@@ -70,16 +70,16 @@ async def test_approval_over_http(public, internal, service, session, tokens):
         json={"tool_use_id": "t1", "tool_name": "Bash", "args": {"command": "ls"}},
         headers=headers,
     )
-    assert permit.json()["outcome"] == "require_confirmation"
+    assert permit.json()["outcome"] == "require_approval"
     own = await public.post(
         f"/v1/sessions/{sid}/approvals",
-        json={"tool_use_id": "t1", "decision": "allow"},
+        json={"tool_use_id": "t1", "verdict": "allow"},
         headers=as_user("alice@example.com"),
     )
     assert own.status_code == 403
     other = await public.post(
         f"/v1/sessions/{sid}/approvals",
-        json={"tool_use_id": "t1", "decision": "allow"},
+        json={"tool_use_id": "t1", "verdict": "allow"},
         headers=as_user("bob@example.com"),
     )
     assert other.status_code == 201 and other.json()["decided_by"] == "bob@example.com"

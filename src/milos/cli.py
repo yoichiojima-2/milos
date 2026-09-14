@@ -23,7 +23,7 @@ from .auth import SessionTokens
 from .client import ApiError, Client
 from .errors import Invalid, MilosError
 from .jobs import NoJobs
-from .models import Event, EventType, Session, SessionStatus, StopReason
+from .models import Event, EventType, Session, SessionStatus, StopReason, Verdict
 from .service import Service
 from .store import FirestoreStore
 
@@ -65,13 +65,13 @@ def _print_event(event: Event) -> None:
         case EventType.USER_MESSAGE | EventType.AGENT_MESSAGE:
             body = payload.get("text", "")
         case EventType.AGENT_TOOL_USE:
-            body = f"{payload.get('tool_name')} {_args(payload)} → {payload.get('decision')} ({payload.get('reason')})"
+            body = f"{payload.get('tool_name')} {_args(payload)} → {payload.get('outcome')} ({payload.get('reason')})"
         case EventType.TOOL_RESULT:
             body = f"{payload.get('outcome')}: {payload.get('summary', '')[:120]}"
         case EventType.SESSION_STATUS:
             body = f"{payload.get('status')} {payload.get('stop_reason') or ''}".strip()
-        case EventType.USER_TOOL_CONFIRMATION:
-            body = f"{payload.get('decision')} {payload.get('tool_name')}"
+        case EventType.USER_APPROVAL:
+            body = f"{payload.get('verdict')} {payload.get('tool_name')}"
         case _:
             body = json.dumps(payload, default=str)[:200]
     when = event.created_at.astimezone().strftime("%H:%M:%S")
@@ -79,7 +79,7 @@ def _print_event(event: Event) -> None:
 
 
 def _print_session(s: Session) -> None:
-    pending = f" pending={','.join(s.pending_tool_use_ids)}" if s.pending_tool_use_ids else ""
+    pending = f" pending={','.join(c.tool_use_id for c in s.pending)}" if s.pending else ""
     when = s.created_at.strftime("%Y-%m-%d %H:%M")
     print(f"{s.session_id}  {when}  {s.agent_id:<16} {s.status.value:<12} {s.stop_reason or ''}{pending}")
 
@@ -87,7 +87,7 @@ def _print_session(s: Session) -> None:
 async def _pending_calls(client: Client, session: Session) -> list[tuple[Session, Event]]:
     """The tool requests a session is waiting on, with their arguments."""
     requests = {e.tool_use_id: e for e in await client.events(session.session_id) if e.type == EventType.AGENT_TOOL_USE}
-    return [(session, requests[t]) for t in session.pending_tool_use_ids if t in requests]
+    return [(session, requests[c.tool_use_id]) for c in session.pending if c.tool_use_id in requests]
 
 
 async def _print_waiting(client: Client, session_id: str) -> None:
@@ -162,7 +162,7 @@ async def cmd_sessions(args: argparse.Namespace) -> int:
 async def _inbox(client: Client, session_id: str | None = None) -> list[tuple[Session, Event]]:
     """Every tool call waiting on the caller, or those of one session."""
     sessions = [await client.session(session_id)] if session_id else await client.sessions(role="approver")
-    return [call for s in sessions if s.pending_tool_use_ids for call in await _pending_calls(client, s)]
+    return [call for s in sessions if s.pending for call in await _pending_calls(client, s)]
 
 
 def _print_call(session: Session, request: Event) -> None:
@@ -207,8 +207,8 @@ async def cmd_confirm(args: argparse.Namespace) -> int:
             ((session, request),) = calls
             session_id, tool_use_id = session.session_id, request.tool_use_id or ""
             print(f"{args.decision}: {request.payload.get('tool_name')} {_args(request.payload)} in {session_id}")
-        approval = await client.confirm(session_id, tool_use_id, args.decision)
-    print(f"{approval.decision} by {approval.decided_by}")
+        approval = await client.decide(session_id, tool_use_id, Verdict(args.decision))
+    print(f"{approval.verdict} by {approval.decided_by}")
     return 0
 
 

@@ -13,7 +13,7 @@ from milos import cli
 from milos.api import create_app
 from milos.auth import IAP_HEADER
 from milos.client import Client
-from milos.models import StopReason
+from milos.models import StopReason, Verdict
 
 from .test_api import FakeIap
 
@@ -67,7 +67,7 @@ def test_agents_list_shows_tools_and_approval(as_user, agent, capsys):
 
 def test_pending_shows_the_call_and_the_commands(as_user, service, agent, capsys):
     session = parked_session(service, agent, approvers=["lead@example.com"])
-    assert session.pending_tool_use_ids == ["toolu_1"]
+    assert [c.tool_use_id for c in session.pending] == ["toolu_1"]
 
     as_user("lead@example.com")
     assert cli.main(["pending"]) == 0
@@ -89,17 +89,17 @@ async def test_follow_waits_through_the_approval(app, service, agent, capsys):
     await asyncio.sleep(0.05)
     assert not task.done()  # parked for approval, still following
     out = capsys.readouterr().out
-    assert 'Bash {"command": "ls"} → require_confirmation' in out
+    assert 'Bash {"command": "ls"} → require_approval' in out
     assert "waiting for lead@example.com to decide: Bash" in out and f"milos allow {session.session_id} toolu_1" in out
 
-    await service.confirm(session.session_id, "toolu_1", "allow", actor="lead@example.com")
+    await service.decide(session.session_id, "toolu_1", verdict=Verdict.ALLOW, by="lead@example.com")
     resumed = await service.get_session(session.session_id)
     assert resumed.status == "running"
     await service.ack(resumed.session_id, lease_token=resumed.lease.token, seq=1)  # the runner consumed "hi"
     await service.finish(resumed.session_id, lease_token=resumed.lease.token, stop_reason=StopReason.END_TURN)
     await asyncio.wait_for(task, 2)
     out = capsys.readouterr().out
-    assert "user.tool_confirmation" in out and out.rstrip().endswith("milos send " + session.session_id + ' "..."')
+    assert "user.approval" in out and out.rstrip().endswith("milos send " + session.session_id + ' "..."')
 
 
 async def test_follow_says_how_to_resume_when_interrupted(app, service, agent, capsys):

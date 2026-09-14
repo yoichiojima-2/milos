@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from milos.errors import AlreadyExists, Conflict, Forbidden, Invalid, NotFound, Stopped
-from milos.models import EventType, RunnerEvent, SessionStatus, StopReason
+from milos.models import EventType, Outcome, RunnerEvent, SessionStatus, StopReason, Verdict
 
 from .conftest import definition
 
@@ -24,7 +24,7 @@ async def test_create_session_writes_first_event_and_launches(service, session, 
     assert launched["env"]["MILOS_LEASE_TOKEN"] == session.lease.token
     assert launched["env"]["MILOS_SESSION_TOKEN"].startswith(session.session_id + ".")
     assert launched["agent_id"] == "analyst"
-    assert "MILOS_API_URL" in launched["env"]
+    assert "MILOS_INTERNAL_API_URL" in launched["env"]
 
 
 async def test_create_session_rejects_missing_definition(service):
@@ -115,7 +115,7 @@ async def test_runner_may_only_append_its_own_event_types(service, session):
 async def test_allowed_tool_is_journaled_audited_then_permitted(service, session, audit, store):
     sid = session.session_id
     decision = await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={"path": "a.csv"})
-    assert decision.kind == "allow"
+    assert decision.outcome == Outcome.ALLOW
     types = [e.type for e in await service.events(sid)]
     assert types[-2:] == [EventType.AGENT_TOOL_USE, EventType.TOOL_PERMITTED]
     assert audit.entries[0]["tool_use_id"] == "t1" and "args" not in audit.entries[0]
@@ -145,7 +145,7 @@ async def test_unlisted_tool_is_denied(service, session):
         tool_name="WebFetch",
         args={},
     )
-    assert decision.kind == "deny"
+    assert decision.outcome == Outcome.DENY
 
 
 async def test_permission_is_create_only(service, session, store):
@@ -167,20 +167,20 @@ async def test_approval_flow_parks_session_and_resumes_on_decision(service, sess
         tool_name="Bash",
         args={"command": "rm x"},
     )
-    assert decision.kind == "require_confirmation"
+    assert decision.outcome == Outcome.REQUIRE_APPROVAL
     parked = await service.get_session(sid)
     assert parked.status == SessionStatus.IDLE
     assert parked.stop_reason == StopReason.REQUIRES_ACTION
-    assert parked.pending_tool_use_ids == ["t1"]
+    assert [c.tool_use_id for c in parked.pending] == ["t1"]
     assert parked.approval_expires_at == clock.now.replace() + __import__("datetime").timedelta(seconds=600)
     await service.finish(sid, lease_token=lease(session), stop_reason=StopReason.REQUIRES_ACTION)
 
     with pytest.raises(Forbidden):
-        await service.confirm(sid, "t1", "allow", actor="alice@example.com")  # the operator
-    approval = await service.confirm(sid, "t1", "allow", actor="bob@example.com")
+        await service.decide(sid, "t1", verdict=Verdict.ALLOW, by="alice@example.com")  # the operator
+    approval = await service.decide(sid, "t1", verdict=Verdict.ALLOW, by="bob@example.com")
     assert approval.decided_by == "bob@example.com"
     resumed = await service.get_session(sid)
-    assert resumed.status == SessionStatus.RUNNING and resumed.pending_tool_use_ids == []
+    assert resumed.status == SessionStatus.RUNNING and resumed.pending == []
     assert len(jobs.launched) == 2
 
     # the re-issued call (new id, same content) consumes the approval once
@@ -191,7 +191,7 @@ async def test_approval_flow_parks_session_and_resumes_on_decision(service, sess
         tool_name="Bash",
         args={"command": "rm x"},
     )
-    assert again.kind == "allow" and again.approval_tool_use_id == "t1"
+    assert again.outcome == Outcome.ALLOW and again.approval_tool_use_id == "t1"
     third = await service.permit(
         sid,
         lease_token=lease(resumed),
@@ -199,13 +199,13 @@ async def test_approval_flow_parks_session_and_resumes_on_decision(service, sess
         tool_name="Bash",
         args={"command": "rm x"},
     )
-    assert third.kind == "require_confirmation"
+    assert third.outcome == Outcome.REQUIRE_APPROVAL
 
 
 async def test_changed_arguments_need_a_new_approval(service, session, jobs):
     sid = session.session_id
     await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={"command": "ls"})
-    await service.confirm(sid, "t1", "allow", actor="bob@example.com")
+    await service.decide(sid, "t1", verdict=Verdict.ALLOW, by="bob@example.com")
     resumed = await service.get_session(sid)
     changed = await service.permit(
         sid,
@@ -214,24 +214,24 @@ async def test_changed_arguments_need_a_new_approval(service, session, jobs):
         tool_name="Bash",
         args={"command": "ls -a"},
     )
-    assert changed.kind == "require_confirmation"
+    assert changed.outcome == Outcome.REQUIRE_APPROVAL
 
 
 async def test_denied_approval_denies_the_reissued_call(service, session):
     sid = session.session_id
     await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={"command": "ls"})
-    await service.confirm(sid, "t1", "deny", actor="bob@example.com")
+    await service.decide(sid, "t1", verdict=Verdict.DENY, by="bob@example.com")
     resumed = await service.get_session(sid)
     again = await service.permit(sid, lease_token=lease(resumed), tool_use_id="t2", tool_name="Bash", args={"command": "ls"})
-    assert again.kind == "deny" and "bob@example.com" in again.reason
+    assert again.outcome == Outcome.DENY and "bob@example.com" in again.reason
 
 
 async def test_approval_is_create_only(service, session):
     sid = session.session_id
     await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={})
-    await service.confirm(sid, "t1", "allow", actor="bob@example.com")
+    await service.decide(sid, "t1", verdict=Verdict.ALLOW, by="bob@example.com")
     with pytest.raises(Invalid):
-        await service.confirm(sid, "t1", "deny", actor="carol@example.com")
+        await service.decide(sid, "t1", verdict=Verdict.DENY, by="carol@example.com")
 
 
 async def test_expired_approval_is_recorded_as_timed_out_deny(service, session, clock, store, jobs):
@@ -241,9 +241,9 @@ async def test_expired_approval_is_recorded_as_timed_out_deny(service, session, 
     report = await service.inspect()
     assert report.expired == [sid]
     approval = store.docs[f"sessions/{sid}/approvals/t1"]
-    assert approval["decision"] == "deny" and approval["timed_out"] is True
+    assert approval["verdict"] == "deny" and approval["timed_out"] is True
     with pytest.raises(Invalid):
-        await service.confirm(sid, "t1", "allow", actor="bob@example.com")
+        await service.decide(sid, "t1", verdict=Verdict.ALLOW, by="bob@example.com")
     assert f"sessions/{sid}/permissions/t1" not in store.docs
     assert (await service.get_session(sid)).status == SessionStatus.RUNNING  # resumed to learn the denial
 
@@ -259,8 +259,8 @@ async def test_only_listed_approvers_may_decide(service, agent):
     sid = session.session_id
     await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={})
     with pytest.raises(Forbidden):
-        await service.confirm(sid, "t1", "allow", actor="bob@example.com")
-    await service.confirm(sid, "t1", "allow", actor="lead@example.com")
+        await service.decide(sid, "t1", verdict=Verdict.ALLOW, by="bob@example.com")
+    await service.decide(sid, "t1", verdict=Verdict.ALLOW, by="lead@example.com")
 
 
 # --- stop (REQ-D-18) ----------------------------------------------------------
@@ -270,7 +270,7 @@ async def test_terminate_denies_every_further_permission(service, session):
     sid = session.session_id
     await service.terminate(sid, actor="alice@example.com")
     decision = await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={})
-    assert decision.kind == "stop"
+    assert decision.outcome == Outcome.STOP
     assert (await service.poll(sid, lease_token=lease(session))).stop is True
     with pytest.raises(Stopped):
         await service.accept_message(sid, "x", actor="alice@example.com", client_request_id="m")
@@ -279,7 +279,7 @@ async def test_terminate_denies_every_further_permission(service, session):
 async def test_disabled_agent_stops_running_sessions(service, session):
     await service.set_enabled("analyst", False)
     decision = await service.permit(session.session_id, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={})
-    assert decision.kind == "stop"
+    assert decision.outcome == Outcome.STOP
     assert (await service.poll(session.session_id, lease_token=lease(session))).stop is True
 
 
@@ -400,3 +400,26 @@ async def test_list_sessions_by_approver(service, agent):
     await service.create_session("analyst", "hi", operator="bob@example.com", client_request_id="r2")
     assert [s.session_id for s in await service.list_sessions(approver="lead@example.com")] == [mine.session_id]
     assert await service.list_sessions(approver="alice@example.com") == []
+
+
+async def test_permit_commits_request_and_park_together(service, session, store):
+    """Invariant 1: the park and the event that describes it are one transaction; only an allow needs a second."""
+    sid = session.session_id
+    before = store.transactions
+    parked = await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={})
+    assert parked.outcome == Outcome.REQUIRE_APPROVAL and store.transactions - before == 1
+    before = store.transactions
+    allowed = await service.permit(sid, lease_token=lease(session), tool_use_id="t2", tool_name="Read", args={})
+    assert allowed.outcome == Outcome.ALLOW and store.transactions - before == 2
+
+
+async def test_request_replay_is_create_only(service, agent, store, jobs):
+    """Two retries cannot both create: the second finds the request document the first wrote."""
+    first = await service.create_session("analyst", "hi", operator="a@example.com", client_request_id="r1")
+    keys = [path for path in store.docs if path.startswith("requests/")]
+    assert len(keys) == 1 and store.docs[keys[0]]["session_id"] == first.session_id
+    again = await service.create_session("analyst", "hi", operator="a@example.com", client_request_id="r1")
+    assert again.session_id == first.session_id and len(jobs.launched) == 1
+    # a different actor with the same client_request_id is a different request
+    other = await service.create_session("analyst", "hi", operator="b@example.com", client_request_id="r1")
+    assert other.session_id != first.session_id

@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
 
+from .access import can_view
 from .audit import CloudAuditLog, StderrAuditLog
 from .auth import IAP_HEADER, CloudIdentityDirectory, Directory, IapVerifier, Principal, SessionTokens
 from .errors import Forbidden, MilosError, Unauthorized
@@ -95,7 +96,7 @@ def _public(service: Service, *, iap: IapVerifier | None, directory: Directory |
 
     async def viewable(session_id: str, user: User) -> Session:
         session = await service.get_session(session_id)
-        if not service.can_view(session, user.email):
+        if not can_view(session, user.email):
             raise Forbidden("not a participant of this session")
         return session
 
@@ -162,7 +163,7 @@ def _public(service: Service, *, iap: IapVerifier | None, directory: Directory |
         session = await service.get_session(session_id)
         _, version = await service.get_agent(session.agent_id)
         await require_member(user.email, version.allowed_groups, f"{user.email} may not approve for {session.agent_id}")
-        return await service.confirm(session_id, body.tool_use_id, body.decision, actor=user.email)
+        return await service.decide(session_id, body.tool_use_id, verdict=body.verdict, by=user.email)
 
     @router.post("/sessions/{session_id}/terminate")
     async def terminate(session: Viewable, user: User) -> Session:
@@ -217,10 +218,9 @@ def _internal(service: Service, *, tokens: SessionTokens) -> APIRouter:
 
     @router.post("/sessions/{session_id}/permissions")
     async def permit(session_id: Owned, lease: Lease, body: PermissionRequest) -> PermissionAnswer:
-        decision = await service.permit(
+        return await service.permit(
             session_id, lease_token=lease, tool_use_id=body.tool_use_id, tool_name=body.tool_name, args=body.args
         )
-        return PermissionAnswer(outcome=decision.kind, reason=decision.reason)
 
     @router.post("/sessions/{session_id}/poll")
     async def poll(session_id: Owned, lease: Lease) -> Polled:

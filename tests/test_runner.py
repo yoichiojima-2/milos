@@ -12,7 +12,7 @@ from httpx import ASGITransport
 
 from milos.api import create_app
 from milos.control import Control
-from milos.models import EventType, SessionStatus, StopReason
+from milos.models import EventType, SessionStatus, StopReason, Verdict
 from milos.runner import Run, continuation
 from milos.settings import RunnerSettings
 
@@ -173,9 +173,9 @@ async def test_approval_parks_then_resumes_and_executes(service, tokens, session
     first = sdk.instances[0]
     assert first.interrupted and first.executed == []
     parked = await service.get_session(sid)
-    assert parked.pending_tool_use_ids == ["t1"] and parked.lease is None and parked.snapshot == 1
+    assert [c.tool_use_id for c in parked.pending] == ["t1"] and parked.lease is None and parked.snapshot == 1
 
-    await service.confirm(sid, "t1", "allow", actor="bob@example.com")
+    await service.decide(sid, "t1", verdict=Verdict.ALLOW, by="bob@example.com")
     resumed = await service.get_session(sid)
     assert resumed.status == SessionStatus.RUNNING and len(jobs.launched) == 2
 
@@ -185,7 +185,7 @@ async def test_approval_parks_then_resumes_and_executes(service, tokens, session
     assert await run2() == StopReason.END_TURN
     second = sdk.instances[1]
     assert second.options.resume == "sdk-session-1"
-    assert second.prompts == [continuation({"decision": "allow", "tool_name": "Bash"})]
+    assert second.prompts == [continuation({"verdict": "allow", "tool_name": "Bash"})]
     assert second.executed == ["t2"]
     assert (await service.get_session(sid)).snapshot == 2
 

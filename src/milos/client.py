@@ -24,7 +24,7 @@ from .models import (
     Session,
     SessionStatus,
     StopReason,
-    ToolDecision,
+    Verdict,
 )
 
 __all__ = ["ApiError", "Client", "SessionRole", "id_token"]
@@ -85,8 +85,9 @@ class Client(Api):
     async def interrupt(self, session_id: str) -> Event:
         return await self.one(Event, "POST", f"/sessions/{session_id}/interrupt", json={})
 
-    async def confirm(self, session_id: str, tool_use_id: str, decision: ToolDecision) -> Approval:
-        body = NewApproval(tool_use_id=tool_use_id, decision=decision).model_dump()
+    async def decide(self, session_id: str, tool_use_id: str, verdict: Verdict) -> Approval:
+        """Allow or deny a parked tool call, as someone other than the operator."""
+        body = NewApproval(tool_use_id=tool_use_id, verdict=verdict).model_dump(mode="json")
         return await self.one(Approval, "POST", f"/sessions/{session_id}/approvals", json=body)
 
     async def terminate(self, session_id: str) -> Session:

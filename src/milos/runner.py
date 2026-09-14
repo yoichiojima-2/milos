@@ -8,7 +8,7 @@ the hook decides, never the model and never the SDK's own permission mode.
 
     allow                → the tool runs
     deny                 → the model is told why
-    require_confirmation → the turn is interrupted, a snapshot is written and
+    require_approval → the turn is interrupted, a snapshot is written and
                            the job exits; the API restarts a job when a human
                            decides, and the re-issued call is matched by content
     stop                 → the agent was disabled or the session terminated
@@ -42,7 +42,7 @@ from claude_agent_sdk.types import HookEvent, McpHttpServerConfig, McpServerConf
 
 from .control import Control
 from .http import GoogleIdentity, Identity, auth_headers
-from .models import FORBIDDEN_TOOLS, AgentVersion, EventType, PermissionRequest, RunnerEvent, StopReason, sha256_text
+from .models import FORBIDDEN_TOOLS, AgentVersion, EventType, Outcome, PermissionRequest, RunnerEvent, StopReason, sha256_json
 from .settings import MCP_PATH, RunnerSettings
 from .snapshots import Blobs, GcsBlobs, restore, save
 
@@ -78,7 +78,7 @@ class Gate:
     async def pre_tool_use(self, input_data: dict[str, Any], tool_use_id: str | None, _: Any) -> dict[str, Any]:
         tool_name = input_data.get("tool_name", "")
         args = input_data.get("tool_input") or {}
-        tool_use_id = tool_use_id or sha256_text(f"{tool_name}:{args}")[:24]
+        tool_use_id = tool_use_id or sha256_json({"tool_name": tool_name, "args": args})[:24]
         try:
             answer = await self._control.permit(PermissionRequest(tool_use_id=tool_use_id, tool_name=tool_name, args=args))
         except Exception as error:  # the API is unreachable: fail closed
@@ -86,13 +86,13 @@ class Gate:
             return _hook_output("deny", f"permission service unavailable: {error}")
         reason = answer.reason
         match answer.outcome:
-            case "allow":
+            case Outcome.ALLOW:
                 return _hook_output("allow", reason)
-            case "require_confirmation":
+            case Outcome.REQUIRE_APPROVAL:
                 self.parked = tool_use_id
                 await self.interrupt()
                 return _hook_output("deny", f"{reason}; this session pauses until a human decides")
-            case "stop":
+            case Outcome.STOP:
                 self.stopped = True
                 await self.interrupt()
         self.denied.append(tool_use_id)
@@ -160,7 +160,7 @@ def continuation(payload: dict[str, Any]) -> str:
     tool = payload.get("tool_name", "the tool")
     if payload.get("timed_out"):
         return f"The approval for {tool} timed out and was denied. Continue without that call."
-    if payload.get("decision") == "allow":
+    if payload.get("verdict") == "allow":
         return f"The operator approved the {tool} call. Re-issue it exactly as before and continue."
     return f"The operator denied the {tool} call. Continue without it."
 
@@ -240,7 +240,7 @@ class Run:
             for event in polled.events:
                 if event.type == EventType.USER_MESSAGE:
                     await self._turn(client, event.payload["text"])
-                elif event.type == EventType.USER_TOOL_CONFIRMATION:
+                elif event.type == EventType.USER_APPROVAL:
                     await self._turn(client, continuation(event.payload))
                 # user.interrupt between turns has nothing to stop
                 await self.control.ack(event.seq)

@@ -73,7 +73,7 @@ def tokens() -> SessionTokens:
 
 @pytest.fixture
 def service(store, audit, jobs, tokens, clock) -> Service:
-    return Service(store, audit, jobs, tokens, runner_env={"MILOS_API_URL": "http://api"}, now=clock)
+    return Service(store, audit, jobs, tokens, runner_env={"MILOS_INTERNAL_API_URL": "http://api"}, now=clock)
 
 
 def definition(**overrides) -> AgentVersion:
