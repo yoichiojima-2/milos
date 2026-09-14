@@ -70,6 +70,9 @@ INSPECTOR_ACTOR = "system:inspection"
 STALE_LEASE = timedelta(seconds=60)
 MAX_PAYLOAD_BYTES = 200_000
 ACTIVE_STATUSES = (SessionStatus.RUNNING, SessionStatus.RESCHEDULING)
+# The SDK loads deferred tool schemas (its MCP tools among them) through ToolSearch.
+# It reads nothing but schemas, so a definition need not list it and it is always allowed.
+HOUSEKEEPING_TOOLS = frozenset({"ToolSearch"})
 
 
 def new_session_id() -> str:
@@ -634,6 +637,8 @@ class Service:
             return answer(Outcome.STOP, "agent disabled")
         if session.status == SessionStatus.TERMINATED:
             return answer(Outcome.STOP, "session terminated")
+        if tool_name in HOUSEKEEPING_TOOLS:
+            return answer(Outcome.ALLOW, "SDK housekeeping; no effect outside the sandbox")
         if not _tool_allowed(version.allowed_tools, tool_name):
             return answer(Outcome.DENY, f"{tool_name} is not in the agent's allowed tools")
         if not _tool_allowed(version.approval_required, tool_name):

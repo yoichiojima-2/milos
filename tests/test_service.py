@@ -423,3 +423,11 @@ async def test_request_replay_is_create_only(service, agent, store, jobs):
     # a different actor with the same client_request_id is a different request
     other = await service.create_session("analyst", "hi", operator="b@example.com", client_request_id="r1")
     assert other.session_id != first.session_id
+
+
+async def test_tool_search_is_always_allowed(service, session, store):
+    """The SDK discovers its tool schemas through ToolSearch; that is housekeeping, not a capability."""
+    answer = await service.permit(
+        session.session_id, lease_token=lease(session), tool_use_id="ts", tool_name="ToolSearch", args={}
+    )
+    assert answer.outcome == Outcome.ALLOW and f"sessions/{session.session_id}/permissions/ts" in store.docs
