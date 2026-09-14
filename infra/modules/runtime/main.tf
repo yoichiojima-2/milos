@@ -297,8 +297,7 @@ resource "google_cloud_run_v2_service_iam_member" "iap_invokes_public" {
   member   = "serviceAccount:${google_project_service_identity.iap.email}"
 }
 
-# Everyone allowed through IAP: the group (dev) and/or individual accounts
-# (existing-project). Keyed by a stable name so adding one never moves another.
+# Everyone allowed through IAP: the group and/or individual accounts. Keyed by a stable name so adding one never moves another.
 locals {
   iap_accessors = merge(
     var.users_group == null ? {} : { group = "group:${var.users_group}" },
