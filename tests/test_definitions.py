@@ -5,14 +5,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from milos import definitions
 from milos.errors import Invalid
+from milos.models import AgentVersion
 
 REPO = Path(__file__).resolve().parents[1]
 
 
 def test_example_definition_is_valid():
-    version = definitions.load(REPO / "agents" / "analyst.yaml")
+    version = AgentVersion.from_yaml(REPO / "agents" / "analyst.yaml")
     assert version.agent_id == "analyst" and len(version.definition_sha256) == 64
 
 
@@ -28,8 +28,8 @@ def write(tmp_path: Path, **overrides) -> Path:
     "overrides, message",
     [
         ({"max_turns": None}, "max_turns"),
-        ({"max_turns": 0}, "positive"),
-        ({"max_budget_usd": 0}, "positive"),
+        ({"max_turns": 0}, "max_turns: Input should be greater than 0"),
+        ({"max_budget_usd": 0}, "greater than 0"),
         ({"allowed_groups": []}, "at least one group"),
         ({"allowed_tools": ["WebFetch"]}, "connector"),
         ({"approval_required": ["Edit"]}, "not in allowed_tools"),
@@ -40,12 +40,12 @@ def write(tmp_path: Path, **overrides) -> Path:
 )
 def test_invalid_definitions_are_rejected(tmp_path, overrides, message):
     with pytest.raises(Invalid) as error:
-        definitions.load(write(tmp_path, **overrides))
+        AgentVersion.from_yaml(write(tmp_path, **overrides))
     assert message in str(error.value)
 
 
-async def test_registry_is_generated_from_published_versions(service):
-    version = definitions.load(REPO / "agents" / "analyst.yaml")
-    await service.publish(version)
-    table = definitions.registry(await service.list_agents())
-    assert "| analyst | 1 | yes |" in table and "owner@example.com" in table
+def test_all_problems_are_reported_at_once(tmp_path):
+    with pytest.raises(Invalid) as error:
+        AgentVersion.from_yaml(write(tmp_path, max_turns=0, owner="nobody", allowed_tools=["Foo"], purpose=" "))
+    message = str(error.value)
+    assert all(word in message for word in ("max_turns", "owner", "unknown tool Foo", "purpose"))

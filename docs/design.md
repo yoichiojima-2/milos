@@ -5,7 +5,7 @@ The platform runs business agents that a team shares and that also run unattende
 ## 1. Principles
 
 - Three objects: **Agent**, **Session**, **Event**. A session stops for approval and resumes on a human decision. A scheduled run is a session created with its first message. The object model follows Claude Managed Agents so the two stay interchangeable in shape.
-- State changes are concentrated in the API. Clients and runners never write to Firestore.
+- State changes are concentrated in the API. Users, administrators and runners never write to Firestore; publishing a definition is an API call by the admin group.
 - The first interface is the CLI. A web UI, diffs and Binary Authorization are later phases.
 
 ## 2. Architecture
@@ -31,9 +31,12 @@ sessions/{session_id}
   events/{event_id}          append-only; seq is the display order
   permissions/{tool_use_id}  create-only; existence means permitted
   approvals/{tool_use_id}    create-only
+requests/{key}               create-only; one per (actor, client_request_id)
 ```
 
-The types are in [`models.py`](../src/milos/models.py). Every document rejects unknown fields and carries `schema_version`. Two fields go beyond the original design and exist because of how the SDK resumes: `Approval.tool_name` and `Approval.args_sha256` let a re-issued tool call be matched by content, and `Permission.approval_tool_use_id` records which approval a permission consumed so an approval is consumed at most once. `Session.consumed_seq` is the runner's replay cursor.
+The types are in [`models.py`](../src/milos/models.py). Every document rejects unknown fields. Two fields go beyond the original design and exist because of how the SDK resumes: `Approval.tool_name` and `Approval.args_sha256` let a re-issued tool call be matched by content, and `Permission.approval_tool_use_id` records which approval a permission consumed so an approval is consumed at most once. `Session.consumed_seq` is the runner's replay cursor; `Session.pending` holds the calls parked for approval, with their content hashes, so a decision needs no event lookup.
+
+Vocabulary: the runner sends a *permission request* and the API answers with an *outcome* (`allow`, `deny`, `require_approval`, `stop`); an `allow` creates a *permission*. A `require_approval` parks the session until a person records an *approval* with a *verdict* (`allow`, `deny`).
 
 ### Agent
 
@@ -41,23 +44,24 @@ The definition lives in Git and bundles purpose, owner, allowed groups, data cla
 
 ### Invariants
 
-1. A state change and its event commit in the same transaction. Nothing recomputes state from events.
+1. A state change and its event commit in the same transaction; parking a session for approval commits with the `agent.tool_use` event that caused it. Nothing recomputes state from events.
 2. `seq` is allocated by the API. Ids deduplicate; `seq` orders.
-3. A retried request with the same session, actor, `client_request_id` and content returns the same result. The same key with a different `content_sha256` is rejected as a conflict. Scheduled runs build the key from the Cloud Scheduler job name and schedule time.
+3. A retried request with the same actor, `client_request_id` and content returns the same result. The record is a create-only `requests/{key}` document, so two retries cannot both succeed; the same key with a different `content_sha256` is rejected as a conflict. Scheduled runs build the key from the Cloud Scheduler job name and schedule time.
 4. `permissions/{tool_use_id}` and `approvals/{tool_use_id}` are create-only. An approver equal to the operator is rejected.
 5. Runner writes (`agent.*`, `tool.result`, `session.usage`, snapshot pointer) must carry the current `lease.token`.
 6. With `Agent.enabled=false` or `Session.status=terminated`, no permission is created.
 7. The event stream is the journal. Display events and the model transcript are different things; the transcript is in Cloud Storage.
 
-All seven are enforced in [`service.py`](../src/milos/service.py) and tested in [`tests/test_service.py`](../tests/test_service.py).
+All seven are enforced in [`service.py`](../src/milos/service.py) and tested in [`tests/test_service.py`](../tests/test_service.py). Who may call what is decided in [`access.py`](../src/milos/access.py) and applied by [`api.py`](../src/milos/api.py).
 
 ## 4. Execution contract
 
 1. **Start.** `POST /v1/sessions`. The API checks the definition's version, `enabled` and concurrency, writes the session and its first event, issues a session token and a lease token, and launches the agent's job. The session token is an HMAC over the session id, verified on every internal call and never stored.
-2. **Tool call.** The runner's `PreToolUse` hook asks the API. The API checks the lease, `enabled` and the allowed tools, commits `agent.tool_use` and the audit entry, and only then answers `allow`, `require_confirmation` or `deny`. Connectors look the permission up with the API before executing.
-3. **Approval.** The session becomes `idle` / `requires_action` with `approval_expires_at`. The runner interrupts the turn, writes a snapshot and exits. An approver (not the operator; identity from IAP) sends `user.tool_confirmation`; the API restarts the job. The re-issued call, matched by tool name and argument hash, consumes the approval once; a call with different arguments needs a new approval. Expiry is recorded by inspection as `deny` with `timed_out: true`, and the job is restarted so the model learns the denial.
+2. **Tool call.** The runner's `PreToolUse` hook asks the API (`POST /internal/sessions/{id}/permissions`). The API checks the lease, `enabled` and the allowed tools, commits `agent.tool_use` (and, when a person must decide, the park) in one transaction, writes the audit entry synchronously, and only then creates the permission and answers `allow`; the other outcomes are `require_approval`, `deny` and `stop`. Connectors look the permission up with the API before executing.
+3. **Approval.** The session becomes `idle` / `requires_action` with `approval_expires_at`. The runner interrupts the turn, writes a snapshot and exits. An approver (not the operator; identity from IAP) records a verdict (`POST /v1/sessions/{id}/approvals`, event `user.approval`); the API restarts the job. The re-issued call, matched by tool name and argument hash, consumes the approval once; a call with different arguments needs a new approval. Expiry is recorded by inspection as a `deny` verdict with `timed_out: true`, and the job is restarted so the model learns the denial.
 4. **Stop.** `user.interrupt` stops the running turn. `POST /v1/sessions/{id}/terminate` sets `terminated` and records `session.status`. `enabled=false` and `terminated` answer `stop` to every later permission request and poll.
-5. **Scheduled.** Cloud Scheduler calls `POST /internal/sessions`.
+5. **Scheduled.** Cloud Scheduler calls `POST /internal/sessions` with its identity token; the API accepts only the scheduler's service account for that route and for inspection.
+6. **Administration.** `POST /v1/agents` publishes a validated definition and `PATCH /v1/agents/{id}` enables or disables an agent; both need membership of the admin group. CI publishes the merged definitions this way.
 
 - A run silent for 60 seconds becomes `rescheduling` and inspection restarts it with a new lease. The old job can no longer write. A restart that stalls again becomes `needs_attention`.
 - Job retries are zero, so an execution with side effects is never duplicated by the platform.
@@ -91,9 +95,10 @@ All projects sit under the department folder with Google-managed encryption.
 
 | Identity | May |
 | --- | --- |
-| API | Firestore; run the registered jobs with overrides; write logs; read the token key |
+| API | Firestore; run the registered jobs with overrides; write logs; read the token key; read group membership (a member of the users group) |
 | runner (per agent) | Vertex AI; the snapshot bucket; the internal API; package remotes |
-| scheduler | invoke the internal API |
+| scheduler | invoke the internal API; its identity is verified on the routes it uses |
+| admin group (people and CI) | publish, enable and disable definitions through the public API |
 | internal connector | read approved data; no NAT, no secrets |
 | egress connector | the SaaS secrets; no data |
 | web fetch | nothing |
@@ -110,14 +115,15 @@ Terraform modules: `foundation` / `network` / `runtime` / `egress` / `logging` /
 
 | Subject | Passes when | Where |
 | --- | --- | --- |
-| Journal (REQ-D-09) | No tool runs before its event and audit entry are committed | `test_allowed_tool_is_journaled_audited_then_permitted`, `test_audit_failure_means_no_permission` |
+| Journal (REQ-D-09) | No tool runs before its event and audit entry are committed; the park commits with its event | `test_allowed_tool_is_journaled_audited_then_permitted`, `test_audit_failure_means_no_permission`, `test_permit_commits_request_and_park_together` |
 | Stop (REQ-D-18) | After `enabled=false` or `terminate`, every permission request is refused | `test_terminate_denies_every_further_permission`, `test_disabled_agent_stops_running_sessions` |
 | Approval (REQ-D-17) | Expiry is recorded as `deny`; changed content needs a new approval | `test_expired_approval_is_recorded_as_timed_out_deny`, `test_changed_arguments_need_a_new_approval` |
 | Definition (REQ-D-12) | A definition with a missing mandatory field cannot start a session | `test_invalid_definitions_are_rejected`, `test_create_session_rejects_missing_definition` |
 | Limits (REQ-D-19) | The SDK stops at the limit and the session is `budget_reached`; a definition without limits is not published | `test_budget_reached_is_reported`, `test_invalid_definitions_are_rejected` |
 | Lease | A stale lease token is rejected; a stalled job is restarted by inspection | `test_stale_lease_is_rejected`, `test_stalled_run_is_rescheduled_once_then_needs_attention` |
 | Snapshot | A failed upload leaves the previous snapshot | `test_snapshot_pointer_advances_in_order` |
-| Unattended | A scheduled session runs to `idle` and resumes from its snapshot after a CLI approval | `test_scheduler_creates_idempotent_sessions`, `test_approval_parks_then_resumes_and_executes` |
+| Unattended | A scheduled session runs to `idle` and resumes from its snapshot after a CLI approval; only the scheduler identity may schedule | `test_scheduler_creates_idempotent_sessions`, `test_approval_parks_then_resumes_and_executes`, `test_scheduler_identity_is_verified` |
+| Administration | Publishing needs the admin group; nobody else can change what runs | `test_publish_requires_admin_group` |
 | Network (REQ-D-02, D-20) | `curl` to a public host fails inside the runner; `egress` reaches allowed FQDNs only; `internal` has no NAT | real hardware, see operations |
 
 ### Rollout

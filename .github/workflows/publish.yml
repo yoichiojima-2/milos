@@ -1,0 +1,36 @@
+name: publish
+
+# Publish the deployed definitions through the API after they merge. CI signs a
+# JWT for the milos-admin service account (Workload Identity Federation; the
+# provider is an organisation-side input like the folder and billing account)
+# and calls `milos agents publish`, which validates every file before any is
+# published. Skipped until the repository variables are set.
+
+on:
+  push:
+    branches: [main]
+    paths: ["deployments/**", "agents/**"]
+
+jobs:
+  publish:
+    if: vars.MILOS_WIF_PROVIDER != '' && vars.MILOS_ADMIN_SERVICE_ACCOUNT != '' && vars.MILOS_API_URL != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.MILOS_WIF_PROVIDER }}
+          service_account: ${{ vars.MILOS_ADMIN_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: uv sync --group dev
+      - run: uv run milos agents validate agents/*.yaml deployments/*/*.yaml
+      - name: publish
+        env:
+          MILOS_API_URL: ${{ vars.MILOS_API_URL }}
+        run: |
+          export MILOS_ID_TOKEN=$(scripts/iap-token.sh "${{ vars.MILOS_ADMIN_SERVICE_ACCOUNT }}" "$MILOS_API_URL")
+          uv run milos agents publish deployments/dev/*.yaml

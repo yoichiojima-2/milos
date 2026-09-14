@@ -5,11 +5,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from milos.access import Access
 from milos.auth import SessionTokens
 from milos.models import AgentVersion
 from milos.service import Service
 
 from .fakes import FakeAuditLog, FakeDirectory, FakeJobs, FakeStore
+
+EMULATOR_HOST = os.environ.get("FIRESTORE_EMULATOR_HOST")  # captured before `clean_env` strips it
 
 GCP_ENV = (
     "GOOGLE_CLOUD_PROJECT",
@@ -63,7 +66,12 @@ def jobs() -> FakeJobs:
 
 @pytest.fixture
 def directory() -> FakeDirectory:
-    return FakeDirectory({"analysts@example.com": ["*@example.com"]})
+    return FakeDirectory({"analysts@example.com": ["*@example.com"], "admins@example.com": ["admin@example.com"]})
+
+
+@pytest.fixture
+def access(directory) -> Access:
+    return Access(directory, admin_group="admins@example.com")
 
 
 @pytest.fixture
@@ -73,7 +81,7 @@ def tokens() -> SessionTokens:
 
 @pytest.fixture
 def service(store, audit, jobs, tokens, clock) -> Service:
-    return Service(store, audit, jobs, tokens, runner_env={"MILOS_API_URL": "http://api"}, now=clock)
+    return Service(store, audit, jobs, tokens, runner_env={"MILOS_INTERNAL_API_URL": "http://api"}, now=clock)
 
 
 def definition(**overrides) -> AgentVersion:
@@ -94,6 +102,7 @@ def definition(**overrides) -> AgentVersion:
         model="claude-sonnet-5@20260601",
         runner_sa="runner-analyst@runtime.iam.gserviceaccount.com",
         system_prompt="You are a careful analyst.",
+        connectors=["egress"],
         published_at=datetime(2026, 9, 1, tzinfo=UTC),
     )
     base.update(overrides)

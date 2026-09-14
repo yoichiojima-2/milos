@@ -40,7 +40,7 @@ from claude_agent_sdk import (
 )
 
 from .client import Client, id_token
-from .models import Event, EventType, Session, SessionStatus, StopReason, ToolDecision
+from .models import Event, EventType, Session, SessionStatus, StopReason, Verdict
 
 PermissionResult = PermissionResultAllow | PermissionResultDeny
 CanUseTool = Callable[[str, dict[str, Any], ToolPermissionContext], Awaitable[PermissionResult]]
@@ -151,7 +151,7 @@ class MilosClient:
         last_text: str | None = None
         while True:
             async for event in self._operator.follow(
-                session.session_id, after=self._after, interval=self.options.poll_interval
+                session.session_id, after=self._after, interval=self.options.poll_interval, through_approvals=False
             ):
                 self._after = event.seq
                 if event.type == EventType.SESSION_USAGE:
@@ -173,12 +173,12 @@ class MilosClient:
         assert self.options.can_use_tool and self._approver
         events = await self._operator.events(session.session_id)
         calls = {e.tool_use_id: e.payload for e in events if e.type == EventType.AGENT_TOOL_USE}
-        for tool_use_id in session.pending_tool_use_ids:
-            call = calls[tool_use_id]
-            context = ToolPermissionContext(tool_use_id=tool_use_id)
+        for pending in session.pending:
+            call = calls[pending.tool_use_id]
+            context = ToolPermissionContext(tool_use_id=pending.tool_use_id)
             result = await self.options.can_use_tool(call["tool_name"], call["args"], context)
-            decision: ToolDecision = "allow" if isinstance(result, PermissionResultAllow) else "deny"
-            await self._approver.confirm(session.session_id, tool_use_id, decision)
+            verdict = Verdict.ALLOW if isinstance(result, PermissionResultAllow) else Verdict.DENY
+            await self._approver.decide(session.session_id, pending.tool_use_id, verdict)
 
 
 async def query(prompt: str, options: MilosOptions) -> AsyncIterator[Message]:

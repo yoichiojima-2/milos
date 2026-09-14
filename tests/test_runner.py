@@ -10,9 +10,10 @@ from typing import Any
 import pytest
 from httpx import ASGITransport
 
+from milos.access import Access
 from milos.api import create_app
 from milos.control import Control
-from milos.models import EventType, SessionStatus, StopReason
+from milos.models import EventType, SessionStatus, StopReason, Verdict
 from milos.runner import Run, continuation
 from milos.settings import RunnerSettings
 
@@ -111,7 +112,7 @@ def blobs() -> FakeBlobs:
 
 
 def make_run(service, tokens, session, sdk, blobs, tmp_path: Path, monkeypatch) -> Run:
-    app = create_app(service, role="internal", tokens=tokens)
+    app = create_app(service, role="internal", tokens=tokens, access=Access(None))
     control = Control(
         "http://internal",
         session_id=session.session_id,
@@ -155,7 +156,7 @@ async def test_plain_turn_reports_messages_and_finishes(service, tokens, session
     assert options.setting_sources == [] and "WebFetch" in options.disallowed_tools
     assert options.max_turns == 20 and options.max_budget_usd == 5.0
     assert options.env["CLAUDE_CODE_USE_VERTEX"] == "1"
-    assert options.mcp_servers == {}  # analyst has no connectors in the test definition
+    assert list(options.mcp_servers) == ["egress"]  # the definition's connectors, from connector_urls
 
 
 async def test_denied_tool_never_runs(service, tokens, session, sdk, blobs, tmp_path, monkeypatch):
@@ -173,9 +174,9 @@ async def test_approval_parks_then_resumes_and_executes(service, tokens, session
     first = sdk.instances[0]
     assert first.interrupted and first.executed == []
     parked = await service.get_session(sid)
-    assert parked.pending_tool_use_ids == ["t1"] and parked.lease is None and parked.snapshot == 1
+    assert [c.tool_use_id for c in parked.pending] == ["t1"] and parked.lease is None and parked.snapshot == 1
 
-    await service.confirm(sid, "t1", "allow", actor="bob@example.com")
+    await service.decide(sid, "t1", verdict=Verdict.ALLOW, by="bob@example.com")
     resumed = await service.get_session(sid)
     assert resumed.status == SessionStatus.RUNNING and len(jobs.launched) == 2
 
@@ -185,7 +186,7 @@ async def test_approval_parks_then_resumes_and_executes(service, tokens, session
     assert await run2() == StopReason.END_TURN
     second = sdk.instances[1]
     assert second.options.resume == "sdk-session-1"
-    assert second.prompts == [continuation({"decision": "allow", "tool_name": "Bash"})]
+    assert second.prompts == [continuation({"verdict": "allow", "tool_name": "Bash"})]
     assert second.executed == ["t2"]
     assert (await service.get_session(sid)).snapshot == 2
 
@@ -214,6 +215,7 @@ async def test_unreachable_api_denies_fail_closed(tokens, session, sdk, tmp_path
     gate = Gate(Down())  # type: ignore[arg-type]
     out = await gate.pre_tool_use({"tool_name": "Read", "tool_input": {}}, "t1", None)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert gate.stopped  # a runner that cannot reach the API does not keep going
 
 
 async def test_interrupt_during_turn_reaches_the_client(service, tokens, session, sdk, blobs, tmp_path, monkeypatch):

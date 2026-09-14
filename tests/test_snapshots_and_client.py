@@ -39,8 +39,8 @@ async def test_snapshot_round_trip(tmp_path: Path):
 
 
 @pytest.fixture
-def client(service, tokens, directory):
-    app = create_app(service, role="public", tokens=tokens, iap=FakeIap(), directory=directory)
+def client(service, tokens, access):
+    app = create_app(service, role="public", tokens=tokens, verifier=FakeIap(), access=access)
     c = Client("http://public", transport=ASGITransport(app=app))
     c._http.headers[IAP_HEADER] = "alice@example.com"
     return c
@@ -54,7 +54,7 @@ async def test_client_drives_a_session(client, agent, service):
     assert [e.type.value for e in events][-1] == "user.message"
     assert [s.session_id for s in await client.sessions()] == [session.session_id]
     with pytest.raises(ApiError, match="403"):
-        await client.confirm(session.session_id, "nope", "allow")
+        await client.decide(session.session_id, "nope", "allow")
     assert (await client.terminate(session.session_id)).status.value == "terminated"
     seen = [e.seq async for e in client.follow(session.session_id)]
     assert seen == [e.seq for e in await client.events(session.session_id)]

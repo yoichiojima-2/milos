@@ -19,8 +19,9 @@ variable "vertex_region" {
 }
 
 variable "image" {
-  description = "Image every service and job runs, e.g. <region>-docker.pkg.dev/<runtime project>/milos/milos:<sha>."
+  description = "Image every service and job runs, e.g. <region>-docker.pkg.dev/<runtime project>/milos/milos:<sha>. The default is a public placeholder so the first apply, which creates the registry, succeeds before any image is built."
   type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
 
 variable "agent_ids" {
@@ -30,6 +31,11 @@ variable "agent_ids" {
 
 variable "users_group" {
   description = "Google group allowed through IAP to the public API."
+  type        = string
+}
+
+variable "admin_group" {
+  description = "Google group that may publish, enable and disable definitions; the milos-admin service account (CI) must be a member."
   type        = string
 }
 

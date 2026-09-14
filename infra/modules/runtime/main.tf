@@ -13,11 +13,11 @@ locals {
   connector_urls = merge(var.connector_urls, { internal = local.connector_url })
 
   runner_env = {
-    MILOS_API_URL         = local.internal_url
-    MILOS_PROJECT         = var.project
-    MILOS_SNAPSHOT_BUCKET = google_storage_bucket.snapshots.name
-    MILOS_CONNECTOR_URLS  = jsonencode(local.connector_urls)
-    MILOS_VERTEX_REGION   = var.vertex_region
+    MILOS_INTERNAL_API_URL = local.internal_url
+    MILOS_PROJECT          = var.project
+    MILOS_SNAPSHOT_BUCKET  = google_storage_bucket.snapshots.name
+    MILOS_CONNECTOR_URLS   = jsonencode(local.connector_urls)
+    MILOS_VERTEX_REGION    = var.vertex_region
   }
 
   api_env = {
@@ -29,6 +29,8 @@ locals {
     MILOS_CONNECTOR_URLS    = jsonencode(local.connector_urls)
     MILOS_VERTEX_REGION     = var.vertex_region
     MILOS_IAP_AUDIENCE      = var.iap_audience
+    MILOS_ADMIN_GROUP       = var.admin_group
+    MILOS_SCHEDULER_SA      = google_service_account.scheduler.email
   }
 }
 
@@ -72,38 +74,22 @@ resource "google_firestore_index" "sessions_by_operator" {
   }
 }
 
-# `finish` looks for a queued user message after the consumed sequence:
-# equality on type plus a range on seq.
-resource "google_firestore_index" "events_queued_messages" {
+resource "google_firestore_index" "sessions_by_approver" {
   project    = var.project
   database   = google_firestore_database.default.name
-  collection = "events"
+  collection = "sessions"
 
   fields {
-    field_path = "type"
-    order      = "ASCENDING"
+    field_path   = "approvers"
+    array_config = "CONTAINS"
   }
   fields {
-    field_path = "seq"
-    order      = "ASCENDING"
+    field_path = "created_at"
+    order      = "DESCENDING"
   }
 }
 
-# Approvals find the tool request by id: two equalities on one collection.
-resource "google_firestore_index" "events_tool_requests" {
-  project    = var.project
-  database   = google_firestore_database.default.name
-  collection = "events"
 
-  fields {
-    field_path = "tool_use_id"
-    order      = "ASCENDING"
-  }
-  fields {
-    field_path = "type"
-    order      = "ASCENDING"
-  }
-}
 
 resource "google_storage_bucket" "snapshots" {
   project                     = var.project
@@ -562,7 +548,7 @@ resource "google_cloud_run_v2_service" "connector" {
       args  = ["serve", "connector", "--name", "internal"]
 
       env {
-        name  = "MILOS_API_URL"
+        name  = "MILOS_INTERNAL_API_URL"
         value = local.internal_url
       }
 
@@ -649,7 +635,7 @@ resource "google_cloud_scheduler_job" "sessions" {
 resource "google_logging_metric" "denied" {
   project = var.project
   name    = "${var.name}/tool_requests_denied"
-  filter  = "logName=\"projects/${var.project}/logs/milos-audit\" AND jsonPayload.decision=\"deny\""
+  filter  = "logName=\"projects/${var.project}/logs/milos-audit\" AND jsonPayload.outcome=\"deny\""
 
   metric_descriptor {
     metric_kind = "DELTA"

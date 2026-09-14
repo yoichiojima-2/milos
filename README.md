@@ -48,14 +48,19 @@ system_prompt: |
 ## A session
 
 ```sh
-milos run analyst "Summarise last week's numbers." --approver lead@example.com --follow
+milos agents list                       # what you may run, and which tools pause for approval
+milos agents publish deployments/dev/*.yaml   # admin group: validate locally, publish through the API
+milos run analyst "Summarise last week's numbers." --approver lead@example.com
+milos pending                           # as the approver: waiting calls with their arguments
+milos allow                             # decide; ids are needed only when several calls wait
 milos sessions                          # status, stop reason, pending tool calls
 milos events sess_…  --follow           # the journal: messages, tool requests, decisions
-milos allow sess_… toolu_…              # a person other than the operator decides
 milos send sess_… "Also include June."  # a follow-up; an idle session restarts
 milos interrupt sess_…                  # stops the current turn
 milos terminate sess_…                  # ends the session; every later tool request is refused
 ```
+
+`run` is the whole interaction: it prints each message, tool request and decision as it happens, and when a call needs a person it says who and waits, then carries on once they decide. Ctrl-C detaches; the session continues and `events --follow` picks it up again (`--detach` returns the id at once). When the session stops the CLI prints what moves it on. The CLI reads `MILOS_API_URL` and the token settings from `.env` in the working directory; `.env.example` lists them.
 
 A session starts running and stops in one of five ways: `end_turn` (idle, restarts on the next message), `requires_action` (a tool call waits for a person), `budget_reached` (the definition's turn or cost limit), `stopped` (terminated, or the agent was disabled), `needs_attention` (a run died twice; inspection gave up). Disabling an agent stops every session at its next tool request or poll.
 
@@ -75,19 +80,20 @@ async for message in query("Summarise last week's numbers.", options):
 
 ```
 src/milos/
-  models.py       Agent, AgentVersion, Session, Event, Lease, Permission, Approval
+  models.py       documents (Agent, AgentVersion with its rules, Session, Event, Permission, Approval, Request) and wire types
   store.py        transactional document store over Firestore (fake in tests/)
   service.py      the execution contract: every state change, every invariant
-  api.py          FastAPI; public (IAP) and internal (session + lease tokens) routes
-  auth.py         IAP assertions, session tokens, group membership
+  access.py       who may view, operate, decide, administer
+  api.py          FastAPI; public (IAP) and internal (session + lease tokens) routes; applies access.py
+  auth.py         identity tokens (IAP assertion, Google ID token), session tokens, group membership
   audit.py        synchronous Cloud Logging entries
   jobs.py         Cloud Run Job launches
-  definitions.py  YAML definitions: validation, publishing, the registry
   runner.py       the job: SDK + PreToolUse hook, poll loop, snapshots
+  http.py         the one HTTP base for every client of the API
   control.py      the runner's client for the internal API
   snapshots.py    GCS snapshots of transcript and working directory
-  connector.py    MCP connectors with the permission check; web_fetch
-  client.py       client for the public API
+  connector.py    MCP connectors with the permission check; web_fetch, data files
+  client.py       client for the public API; sdk.py gives it the Agent SDK's shape
   cli.py          `milos`
 agents/           definitions
 infra/            Terraform: modules/{foundation,network,runtime,egress,logging,data,perimeter}, envs/dev
@@ -99,13 +105,16 @@ tests/            no GCP needed; fakes.py stands in for every dependency
 
 ```sh
 uv sync --group dev
-uv run pytest -q                                  # 64 tests, no credentials
+uv run pytest -q                                  # no credentials needed
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                                       # strict on src/milos
-uv run milos agents validate agents/*.yaml
+uv run milos agents validate agents/*.yaml deployments/*/*.yaml
+FIRESTORE_EMULATOR_HOST=localhost:8080 uv run pytest -m emulator   # the store against the real emulator
 ```
 
 The tests drive the real service through the real API with the SDK replaced by a scripted client (`tests/test_runner.py`), so the approval flow, the lease, the stop signal and the snapshot pointer are exercised end to end in memory. Firestore's transaction semantics that matter (create-only documents, dotted updates, rollback) are mirrored by `tests/fakes.py`; run the same suite against the emulator by setting `FIRESTORE_EMULATOR_HOST` before adding Firestore-specific tests.
+
+In a remote Claude Code session, the `gcloud-login` skill in `.claude/skills/` installs gcloud and walks through the sign-in, so the CLI, the Firestore emulator and Terraform work there too.
 
 A local API without GCP:
 
@@ -116,8 +125,4 @@ FIRESTORE_EMULATOR_HOST=localhost:8080 uv run milos serve api
 
 ## Deploy
 
-See [docs/operations.md](docs/operations.md). In short: `terraform apply` in `infra/envs/dev` creates the four projects and everything in them, CI builds the one image, `milos agents publish` puts definitions in Firestore, and the first deploy has a short list of things to confirm on real hardware before data with any classification is connected.
-
-## Status
-
-Rewritten in September 2026 from the platform design in the team's Notion. The code is complete for the design's first deployment step; the items the design itself marks as "confirm on real hardware" are listed in [docs/operations.md](docs/operations.md#first-deploy).
+See [docs/operations.md](docs/operations.md). In short: `terraform apply` in `infra/envs/dev` creates the four projects and everything in them, CI builds the one image, `milos agents publish` publishes definitions through the API as the admin identity, and the first deploy has a short list of things to confirm on real hardware before data with any classification is connected.

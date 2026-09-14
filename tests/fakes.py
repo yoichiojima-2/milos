@@ -24,6 +24,8 @@ def _matches(doc: dict[str, Any], where: Sequence[tuple[str, str, Any]]) -> bool
             return False
         if op == "in" and actual not in value:
             return False
+        if op == "array_contains" and value not in (actual or []):
+            return False
         if op == "<" and not (actual is not None and actual < value):
             return False
         if op == "<=" and not (actual is not None and actual <= value):
@@ -105,6 +107,7 @@ def _set_path(doc: dict[str, Any], key: str, value: Any) -> None:
 class FakeStore:
     def __init__(self) -> None:
         self.docs: dict[str, dict[str, Any]] = {}
+        self.transactions = 0  # committed transactions, for tests that count them
 
     async def get(self, path: str) -> dict[str, Any] | None:
         return await FakeTransaction(self.docs).get(path)
@@ -116,6 +119,7 @@ class FakeStore:
         tx = FakeTransaction(self.docs)
         result = await fn(tx)
         tx.commit()
+        self.transactions += 1
         return result
 
 

@@ -23,8 +23,7 @@ from milos import (
 from milos.api import create_app
 from milos.auth import IAP_HEADER
 from milos.client import Client
-from milos.models import EventType, SessionStatus, StopReason
-from milos.service import RunnerEvent
+from milos.models import EventType, RunnerEvent, SessionStatus, StopReason
 
 from .test_api import FakeIap
 
@@ -32,8 +31,8 @@ OPERATOR, APPROVER = "alice@example.com", "bob@example.com"
 
 
 @pytest.fixture
-def app(service, tokens, directory):
-    return create_app(service, role="public", tokens=tokens, iap=FakeIap(), directory=directory)
+def app(service, tokens, access):
+    return create_app(service, role="public", tokens=tokens, verifier=FakeIap(), access=access)
 
 
 def as_user(app, email: str) -> Client:
@@ -56,9 +55,9 @@ async def finish_turn(service, session_id: str, text: str) -> None:
     lease = session.lease.token
     poll = await service.poll(session_id, lease_token=lease)
     await service.ack(session_id, lease_token=lease, seq=max(e.seq for e in poll.events))
-    await service.report(session_id, [RunnerEvent(EventType.AGENT_MESSAGE, {"text": text})], lease_token=lease)
+    await service.report(session_id, [RunnerEvent(type=EventType.AGENT_MESSAGE, payload={"text": text})], lease_token=lease)
     usage = {"num_turns": 1, "duration_ms": 5, "total_cost_usd": 0.01}
-    await service.report(session_id, [RunnerEvent(EventType.SESSION_USAGE, usage)], lease_token=lease)
+    await service.report(session_id, [RunnerEvent(type=EventType.SESSION_USAGE, payload=usage)], lease_token=lease)
     await service.finish(session_id, lease_token=lease, stop_reason=StopReason.END_TURN)
 
 
@@ -99,7 +98,7 @@ async def test_can_use_tool_decides_parked_calls_as_the_approver(app, agent, ser
     session = await service.get_session(sid)
     lease = session.lease.token
     decision = await service.permit(sid, lease_token=lease, tool_use_id="t1", tool_name="Bash", args={"command": "rm x"})
-    assert decision.kind == "require_confirmation"
+    assert decision.outcome == "require_approval"
     await service.finish(sid, lease_token=lease, stop_reason=StopReason.REQUIRES_ACTION)
 
     async def resumed_runner():
@@ -108,7 +107,7 @@ async def test_can_use_tool_decides_parked_calls_as_the_approver(app, agent, ser
             if current.status == SessionStatus.RUNNING and current.lease and current.lease.token != lease:
                 break
             await asyncio.sleep(0.01)
-        result = RunnerEvent(EventType.TOOL_RESULT, {"outcome": "succeeded", "summary": "gone"}, tool_use_id="t1")
+        result = RunnerEvent(type=EventType.TOOL_RESULT, payload={"outcome": "succeeded", "summary": "gone"}, tool_use_id="t1")
         await service.report(sid, [result], lease_token=current.lease.token)
         await finish_turn(service, sid, "deleted")
 
@@ -119,11 +118,11 @@ async def test_can_use_tool_decides_parked_calls_as_the_approver(app, agent, ser
     assert seen == [("Bash", {"command": "rm x"}, "t1")]
     tool_use = next(m for m in messages if isinstance(m, AssistantMessage) and isinstance(m.content[0], ToolUseBlock))
     assert tool_use.content[0].name == "Bash" and tool_use.content[0].input == {"command": "rm x"}
-    assert any(isinstance(m, SystemMessage) and m.subtype == "user.tool_confirmation" for m in messages)
+    assert any(isinstance(m, SystemMessage) and m.subtype == "user.approval" for m in messages)
     tool_result = next(m for m in messages if isinstance(m, UserMessage) and isinstance(m.content, list))
     assert isinstance(tool_result.content[0], ToolResultBlock) and tool_result.content[0].content == "gone"
     assert isinstance(messages[-1], ResultMessage) and messages[-1].subtype == "success"
-    assert (await service.get_session(sid)).pending_tool_use_ids == []
+    assert (await service.get_session(sid)).pending == []
 
 
 async def test_without_can_use_tool_a_parked_session_ends_the_turn(app, agent, service):

@@ -287,7 +287,7 @@ resource "google_cloud_run_v2_service" "this" {
       args  = ["serve", "connector", "--name", "egress"]
 
       env {
-        name  = "MILOS_API_URL"
+        name  = "MILOS_INTERNAL_API_URL"
         value = var.api_internal_url
       }
 

@@ -47,6 +47,11 @@ variable "users_group" {
   type        = string
 }
 
+variable "admin_group" {
+  description = "Google group whose members may publish, enable and disable definitions through the API."
+  type        = string
+}
+
 variable "iap_audience" {
   description = "Expected `aud` of IAP assertions for the public service. Confirm on the first deploy; see docs/operations.md."
   type        = string

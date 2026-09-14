@@ -5,13 +5,16 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from milos.access import Access
 from milos.api import create_app
-from milos.auth import IAP_HEADER, IapVerifier, Principal
+from milos.auth import IAP_HEADER, Principal, TokenVerifier
 from milos.errors import Unauthorized
 from milos.models import sha256_json
 
+from .conftest import definition
 
-class FakeIap(IapVerifier):
+
+class FakeIap(TokenVerifier):
     """Treats the assertion header as the email itself."""
 
     def __init__(self) -> None:
@@ -24,14 +27,14 @@ class FakeIap(IapVerifier):
 
 
 @pytest.fixture
-def public(service, tokens, directory):
-    app = create_app(service, role="public", tokens=tokens, iap=FakeIap(), directory=directory)
+def public(service, tokens, access):
+    app = create_app(service, role="public", tokens=tokens, verifier=FakeIap(), access=access)
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://public")
 
 
 @pytest.fixture
-def internal(service, tokens):
-    app = create_app(service, role="internal", tokens=tokens)
+def internal(service, tokens, access):
+    app = create_app(service, role="internal", tokens=tokens, access=access)
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://internal")
 
 
@@ -66,20 +69,20 @@ async def test_approval_over_http(public, internal, service, session, tokens):
     sid = session.session_id
     headers = {"X-Milos-Session": tokens.issue(sid), "X-Milos-Lease": session.lease.token}
     permit = await internal.post(
-        f"/internal/sessions/{sid}/permit",
+        f"/internal/sessions/{sid}/permissions",
         json={"tool_use_id": "t1", "tool_name": "Bash", "args": {"command": "ls"}},
         headers=headers,
     )
-    assert permit.json()["decision"] == "require_confirmation"
+    assert permit.json()["outcome"] == "require_approval"
     own = await public.post(
         f"/v1/sessions/{sid}/approvals",
-        json={"tool_use_id": "t1", "decision": "allow"},
+        json={"tool_use_id": "t1", "verdict": "allow"},
         headers=as_user("alice@example.com"),
     )
     assert own.status_code == 403
     other = await public.post(
         f"/v1/sessions/{sid}/approvals",
-        json={"tool_use_id": "t1", "decision": "allow"},
+        json={"tool_use_id": "t1", "verdict": "allow"},
         headers=as_user("bob@example.com"),
     )
     assert other.status_code == 201 and other.json()["decided_by"] == "bob@example.com"
@@ -125,7 +128,7 @@ async def test_connector_permission_check(internal, service, session, tokens):
     sid = session.session_id
     headers = {"X-Milos-Session": tokens.issue(sid), "X-Milos-Lease": session.lease.token}
     await internal.post(
-        f"/internal/sessions/{sid}/permit",
+        f"/internal/sessions/{sid}/permissions",
         json={"tool_use_id": "t1", "tool_name": "Read", "args": {"path": "x"}},
         headers=headers,
     )
@@ -156,6 +159,62 @@ async def test_inspect_endpoint(internal, session, clock):
     assert response.json()["restarted"] == [session.session_id]
 
 
-async def test_terminate_over_http(public, session):
-    response = await public.post(f"/v1/sessions/{session.session_id}/terminate", headers=as_user("alice@example.com"))
+async def test_terminate_over_http(public, service, agent):
+    session = await service.create_session(
+        "analyst", "hi", operator="alice@example.com", client_request_id="r", viewers=["viewer@example.com"]
+    )
+    sid = session.session_id
+    # a viewer may watch but not end the session; the operator may
+    assert (await public.post(f"/v1/sessions/{sid}/terminate", headers=as_user("viewer@example.com"))).status_code == 403
+    response = await public.post(f"/v1/sessions/{sid}/terminate", headers=as_user("alice@example.com"))
     assert response.json()["status"] == "terminated"
+
+
+async def test_publish_requires_admin_group(public, service):
+    from .conftest import definition
+
+    body = definition().model_dump(mode="json")
+    assert (await public.post("/v1/agents", json=body, headers=as_user("alice@example.com"))).status_code == 403
+    published = await public.post("/v1/agents", json=body, headers=as_user("admin@example.com"))
+    assert published.status_code == 201 and published.json()["version"] == 1
+    disabled = await public.patch("/v1/agents/analyst", json={"enabled": False}, headers=as_user("admin@example.com"))
+    assert disabled.json()["enabled"] is False
+    assert (
+        await public.patch("/v1/agents/analyst", json={"enabled": True}, headers=as_user("alice@example.com"))
+    ).status_code == 403
+    assert (await public.get("/v1/agents", headers=as_user("alice@example.com"))).json()[0]["agent"]["enabled"] is False
+
+
+async def test_scheduler_identity_is_verified(service, tokens, access, agent):
+    app = create_app(
+        service, role="internal", tokens=tokens, access=access, verifier=FakeIap(), scheduler_sa="scheduler@example.com"
+    )
+    client = AsyncClient(transport=ASGITransport(app=app), base_url="http://internal")
+    body = {"agent_id": "analyst", "message": "weekly"}
+    assert (await client.post("/internal/sessions", json=body)).status_code == 401
+    runner = {"Authorization": "Bearer runner@example.com"}
+    assert (await client.post("/internal/sessions", json=body, headers=runner)).status_code == 403
+    assert (await client.post("/internal/inspect", headers=runner)).status_code == 403
+    scheduler = {"Authorization": "Bearer scheduler@example.com"}
+    assert (await client.post("/internal/sessions", json=body, headers=scheduler)).status_code == 201
+    assert (await client.post("/internal/inspect", headers=scheduler)).status_code == 200
+
+
+async def test_local_mode_without_a_directory_admits_everyone(service, tokens, agent):
+    app = create_app(service, role="public", tokens=tokens, access=Access(None), dev_user="dev@example.com")
+    client = AsyncClient(transport=ASGITransport(app=app), base_url="http://public")
+    created = await client.post("/v1/sessions", json={"agent_id": "analyst", "message": "hi"})
+    assert created.status_code == 201
+    body = definition(purpose="local").model_dump(mode="json")
+    assert (await client.post("/v1/agents", json=body)).status_code == 201
+
+
+async def test_approver_lists_sessions_naming_them(public, agent):
+    body = {"agent_id": "analyst", "message": "hi", "approvers": ["lead@example.com"]}
+    created = await public.post("/v1/sessions", json=body, headers=as_user("alice@example.com"))
+    assert created.status_code == 201
+    as_lead = as_user("lead@example.com")
+    assert (await public.get("/v1/sessions", headers=as_lead)).json() == []
+    approving = await public.get("/v1/sessions", params={"role": "approver"}, headers=as_lead)
+    assert [s["session_id"] for s in approving.json()] == [created.json()["session_id"]]
+    assert (await public.get("/v1/sessions", params={"role": "owner"}, headers=as_lead)).status_code == 422
