@@ -59,6 +59,18 @@ milos terminate sess_…                  # ends the session; every later tool r
 
 A session starts running and stops in one of five ways: `end_turn` (idle, restarts on the next message), `requires_action` (a tool call waits for a person), `budget_reached` (the definition's turn or cost limit), `stopped` (terminated, or the agent was disabled), `needs_attention` (a run died twice; inspection gave up). Disabling an agent stops every session at its next tool request or poll.
 
+From Python the same session has the shape of the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk), with the Agent SDK's own message types; the model, its tools and every security decision stay on the platform:
+
+```python
+from milos import MilosOptions, PermissionResultAllow, query
+
+options = MilosOptions(agent="analyst", approvers=["lead@example.com"])
+async for message in query("Summarise last week's numbers.", options):
+    print(message)
+```
+
+`MilosClient` is the `ClaudeSDKClient` counterpart for a conversation, and `can_use_tool` decides parked tool calls from code, as the approver. The walkthrough is [docs/sdk.ipynb](docs/sdk.ipynb).
+
 ## Layout
 
 ```
@@ -79,7 +91,7 @@ src/milos/
   cli.py          `milos`
 agents/           definitions
 infra/            Terraform: modules/{foundation,network,runtime,egress,logging,data,perimeter}, envs/dev
-docs/             design, operations, compliance
+docs/             design, operations, compliance, sdk.ipynb (using the Python client)
 tests/            no GCP needed; fakes.py stands in for every dependency
 ```
 

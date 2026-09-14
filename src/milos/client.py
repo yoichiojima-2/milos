@@ -34,6 +34,17 @@ class ApiError(RuntimeError):
         self.detail = detail
 
 
+def _detail(response: httpx.Response) -> str:
+    """The API's `detail`, or a short description when the body is not the API's (an IAP or Cloud Run error page)."""
+    if response.status_code in (401, 403) and "text/html" in response.headers.get("content-type", ""):
+        return "not authorised at the edge; set MILOS_IAP_CLIENT_ID (or MILOS_ID_TOKEN) so the client sends an identity token"
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text.strip()[:200] or response.reason_phrase
+    return str(body.get("detail", body)) if isinstance(body, dict) else str(body)
+
+
 def _request_id(client_request_id: str | None) -> dict[str, str]:
     """Omitted keys get a fresh id from the API; passing one makes the request retry-safe."""
     return {"client_request_id": client_request_id} if client_request_id else {}
@@ -64,8 +75,7 @@ class Client:
     async def _call(self, method: str, path: str, **kwargs: Any) -> Any:
         response = await self._http.request(method, f"/v1{path}", **kwargs)
         if response.status_code >= 400:
-            detail = response.json().get("detail", response.text) if response.content else ""
-            raise ApiError(response.status_code, detail)
+            raise ApiError(response.status_code, _detail(response))
         return response.json()
 
     async def _one[M: BaseModel](self, model: type[M], method: str, path: str, **kwargs: Any) -> M:

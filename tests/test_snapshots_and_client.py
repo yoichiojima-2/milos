@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 from httpx import ASGITransport
 
@@ -57,3 +58,12 @@ async def test_client_drives_a_session(client, agent, service):
     assert (await client.terminate(session.session_id)).status.value == "terminated"
     seen = [e.seq async for e in client.follow(session.session_id)]
     assert seen == [e.seq for e in await client.events(session.session_id)]
+
+
+async def test_client_reports_non_json_errors():
+    def edge(request):
+        return httpx.Response(401, headers={"content-type": "text/html"}, text="<html>Unauthorized</html>")
+
+    async with Client("http://public", transport=httpx.MockTransport(edge)) as c:
+        with pytest.raises(ApiError, match="401: not authorised at the edge"):
+            await c.agents()
