@@ -194,3 +194,14 @@ async def test_explicit_user_cannot_approve_own_session(public, service):
         headers=as_user("owner@gmail.com"),
     )
     assert response.status_code == 403
+
+
+async def test_approver_lists_sessions_naming_them(public, agent):
+    body = {"agent_id": "analyst", "message": "hi", "approvers": ["lead@example.com"]}
+    created = await public.post("/v1/sessions", json=body, headers=as_user("alice@example.com"))
+    assert created.status_code == 201
+    as_lead = as_user("lead@example.com")
+    assert (await public.get("/v1/sessions", headers=as_lead)).json() == []
+    approving = await public.get("/v1/sessions", params={"role": "approver"}, headers=as_lead)
+    assert [s["session_id"] for s in approving.json()] == [created.json()["session_id"]]
+    assert (await public.get("/v1/sessions", params={"role": "owner"}, headers=as_lead)).status_code == 422

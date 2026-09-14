@@ -13,13 +13,15 @@ import os
 import sys
 from collections.abc import Sequence
 
+import httpx
+
 from . import definitions
 from .audit import StderrAuditLog
 from .auth import SessionTokens
-from .client import Client
+from .client import ApiError, Client
 from .errors import Invalid, MilosError
 from .jobs import NoJobs
-from .models import Event, EventType
+from .models import Event, EventType, Session, StopReason
 from .service import Service
 from .store import FirestoreStore
 
@@ -56,9 +58,25 @@ def _print_event(event: Event) -> None:
     print(f"{event.seq:>4}  {event.type.value:<24} {event.actor:<20} {body}")
 
 
+def _print_session(s: Session) -> None:
+    pending = f" pending={','.join(s.pending_tool_use_ids)}" if s.pending_tool_use_ids else ""
+    when = s.created_at.strftime("%Y-%m-%d %H:%M")
+    print(f"{s.session_id}  {when}  {s.agent_id:<16} {s.status.value:<12} {s.stop_reason or ''}{pending}")
+
+
+def _print_next_step(session: Session) -> None:
+    """After a session stops, say what unblocks it."""
+    if session.stop_reason == StopReason.REQUIRES_ACTION:
+        for tool_use_id in session.pending_tool_use_ids:
+            print(f"waiting for approval: milos allow {session.session_id} {tool_use_id}  (or deny)")
+    elif session.stop_reason == StopReason.END_TURN:
+        print(f'idle: milos send {session.session_id} "..."')
+
+
 async def _follow(client: Client, session_id: str, *, after: int = 0) -> None:
     async for event in client.follow(session_id, after=after):
         _print_event(event)
+    _print_next_step(await client.session(session_id))
 
 
 # --- commands ------------------------------------------------------------------
@@ -90,11 +108,38 @@ async def cmd_events(args: argparse.Namespace) -> int:
     return 0
 
 
-async def cmd_sessions(_: argparse.Namespace) -> int:
+async def cmd_sessions(args: argparse.Namespace) -> int:
     async with _client() as client:
-        for s in await client.sessions():
-            pending = f" pending={','.join(s.pending_tool_use_ids)}" if s.pending_tool_use_ids else ""
-            print(f"{s.session_id}  {s.agent_id:<16} {s.status.value:<12} {s.stop_reason or ''}{pending}")
+        for s in await client.sessions(role="approver" if args.approving else "operator"):
+            _print_session(s)
+    return 0
+
+
+async def cmd_pending(_: argparse.Namespace) -> int:
+    """Tool calls waiting on the caller, with the arguments a decision is about."""
+    async with _client() as client:
+        for s in await client.sessions(role="approver"):
+            if not s.pending_tool_use_ids:
+                continue
+            requests = {e.tool_use_id: e for e in await client.events(s.session_id) if e.type == EventType.AGENT_TOOL_USE}
+            for tool_use_id in s.pending_tool_use_ids:
+                payload = requests[tool_use_id].payload if tool_use_id in requests else {}
+                args = json.dumps(payload.get("args", {}), default=str)
+                print(f"{s.session_id}  {s.agent_id}  by {s.operator}")
+                print(f"  {payload.get('tool_name', '?')} {args}")
+                print(f"  milos allow {s.session_id} {tool_use_id}  |  milos deny {s.session_id} {tool_use_id}")
+    return 0
+
+
+async def cmd_agents_list(_: argparse.Namespace) -> int:
+    async with _client() as client:
+        for p in await client.agents():
+            v = p.version
+            state = "enabled" if p.agent.enabled else "disabled"
+            print(f"{v.agent_id:<16} v{v.version:<3} {state:<9} {v.purpose}")
+            print(f"{'':16} tools: {', '.join(v.allowed_tools)}")
+            if v.approval_required:
+                print(f"{'':16} needs approval: {', '.join(v.approval_required)}")
     return 0
 
 
@@ -190,7 +235,11 @@ def parser() -> argparse.ArgumentParser:
     events.add_argument("--follow", "-f", action="store_true")
     events.set_defaults(fn=cmd_events)
 
-    sub.add_parser("sessions", help="list your sessions").set_defaults(fn=cmd_sessions)
+    sessions = sub.add_parser("sessions", help="list your sessions")
+    sessions.add_argument("--approving", action="store_true", help="sessions that name you as an approver")
+    sessions.set_defaults(fn=cmd_sessions)
+
+    sub.add_parser("pending", help="tool calls waiting for your approval").set_defaults(fn=cmd_pending)
 
     for decision in ("allow", "deny"):
         c = sub.add_parser(decision, help=f"{decision} a pending tool call")
@@ -206,16 +255,17 @@ def parser() -> argparse.ArgumentParser:
     terminate.add_argument("session")
     terminate.set_defaults(fn=cmd_terminate)
 
-    agents = sub.add_parser("agents", help="definitions (CI)").add_subparsers(dest="agents_command", required=True)
-    validate = agents.add_parser("validate")
+    agents = sub.add_parser("agents", help="published definitions").add_subparsers(dest="agents_command", required=True)
+    agents.add_parser("list", help="agents you can see, with their tools").set_defaults(fn=cmd_agents_list)
+    validate = agents.add_parser("validate", help="check definition files (CI)")
     validate.add_argument("files", nargs="+")
     validate.set_defaults(fn=cmd_agents_validate)
-    publish = agents.add_parser("publish")
+    publish = agents.add_parser("publish", help="publish validated definitions (CI, Firestore access)")
     publish.add_argument("files", nargs="+")
     publish.set_defaults(fn=cmd_agents_publish)
-    agents.add_parser("registry").set_defaults(fn=cmd_agents_registry)
+    agents.add_parser("registry", help="print the generated register (Firestore access)").set_defaults(fn=cmd_agents_registry)
     for name, enabled in (("enable", True), ("disable", False)):
-        toggle = agents.add_parser(name)
+        toggle = agents.add_parser(name, help=f"{name} an agent (Firestore access)")
         toggle.add_argument("agent")
         toggle.set_defaults(fn=cmd_agents_enable, enabled=enabled)
 
@@ -232,8 +282,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result = args.fn(args)
         return int(asyncio.run(result) if inspect.iscoroutine(result) else result)
-    except MilosError as error:
+    except (MilosError, ApiError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
+        return 1
+    except httpx.HTTPError as error:
+        print(f"error: cannot reach the API ({error}); check MILOS_API_URL", file=sys.stderr)
         return 1
 
 

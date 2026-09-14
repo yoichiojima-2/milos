@@ -10,19 +10,27 @@ import asyncio
 import os
 import subprocess
 from collections.abc import AsyncIterator
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import httpx
 from pydantic import BaseModel
 
 from .models import Approval, Event, Published, Session, SessionStatus, ToolDecision
 
+type SessionRole = Literal["operator", "approver"]
+
 
 def id_token(audience: str | None = None) -> str:
+    """`MILOS_ID_TOKEN`, or a token minted by gcloud. Raises `RuntimeError` with the remedy when neither works."""
     if token := os.environ.get("MILOS_ID_TOKEN"):
         return token
     cmd = ["gcloud", "auth", "print-identity-token", *([f"--audiences={audience}"] if audience else [])]
-    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
+    try:
+        return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
+    except FileNotFoundError:
+        raise RuntimeError("gcloud is not installed; install it or set MILOS_ID_TOKEN") from None
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(f"gcloud could not mint an identity token: {error.stderr.strip()}") from None
 
 
 class ApiError(RuntimeError):
@@ -89,8 +97,9 @@ class Client:
         body = {"agent_id": agent_id, "message": message, "approvers": approvers or [], "viewers": viewers or []}
         return await self._one(Session, "POST", "/sessions", json=body | _request_id(client_request_id))
 
-    async def sessions(self) -> list[Session]:
-        return await self._many(Session, "GET", "/sessions")
+    async def sessions(self, *, role: SessionRole = "operator") -> list[Session]:
+        """Sessions you started, or with `role="approver"` those that name you as an approver."""
+        return await self._many(Session, "GET", "/sessions", params={"role": role})
 
     async def session(self, session_id: str) -> Session:
         return await self._one(Session, "GET", f"/sessions/{session_id}")

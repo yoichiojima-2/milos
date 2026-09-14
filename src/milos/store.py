@@ -17,7 +17,7 @@ from typing import Any, Protocol
 
 from .errors import AlreadyExists
 
-type Filter = tuple[str, str, Any]  # (field, op, value); ops: ==, in, <, <=, >, >=
+type Filter = tuple[str, str, Any]  # (field, op, value); ops: ==, in, array_contains, <, <=, >, >=
 
 
 class Reader(Protocol):

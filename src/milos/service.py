@@ -49,7 +49,7 @@ from .models import (
     sha256_text,
     utcnow,
 )
-from .store import Reader, Store, Transaction
+from .store import Filter, Reader, Store, Transaction
 
 RUNNER_ACTOR = "runner"
 INSPECTOR_ACTOR = "system:inspection"
@@ -305,8 +305,15 @@ class Service:
         session = await self.get_session(session_id)
         return session, await self._version(self.store, session.agent_id, session.agent_version)
 
-    async def list_sessions(self, *, operator: str | None = None, limit: int = 50) -> list[Session]:
-        where = [("operator", "==", operator)] if operator else []
+    async def list_sessions(
+        self, *, operator: str | None = None, approver: str | None = None, limit: int = 50
+    ) -> list[Session]:
+        """Newest first; `operator` selects a user's own sessions, `approver` those naming them as approver."""
+        where: list[Filter] = []
+        if operator:
+            where.append(("operator", "==", operator))
+        if approver:
+            where.append(("approvers", "array_contains", approver))
         docs = await self.store.query("sessions", where=where, order_by="created_at", descending=True, limit=limit)
         return [Session.model_validate(d) for d in docs]
 

@@ -24,6 +24,8 @@ def _matches(doc: dict[str, Any], where: Sequence[tuple[str, str, Any]]) -> bool
             return False
         if op == "in" and actual not in value:
             return False
+        if op == "array_contains" and value not in (actual or []):
+            return False
         if op == "<" and not (actual is not None and actual < value):
             return False
         if op == "<=" and not (actual is not None and actual <= value):

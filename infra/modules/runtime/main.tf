@@ -53,8 +53,8 @@ resource "google_firestore_backup_schedule" "weekly" {
   }
 }
 
-# `GET /v1/sessions` lists an operator's sessions newest first: an equality
-# filter plus an order on another field needs a composite index. Every other
+# `GET /v1/sessions` lists sessions newest first, by operator or by approver:
+# a filter plus an order on another field needs a composite index. Every other
 # query the service runs is equality-only or single-field.
 resource "google_firestore_index" "sessions_by_operator" {
   project    = var.project
@@ -64,6 +64,21 @@ resource "google_firestore_index" "sessions_by_operator" {
   fields {
     field_path = "operator"
     order      = "ASCENDING"
+  }
+  fields {
+    field_path = "created_at"
+    order      = "DESCENDING"
+  }
+}
+
+resource "google_firestore_index" "sessions_by_approver" {
+  project    = var.project
+  database   = google_firestore_database.default.name
+  collection = "sessions"
+
+  fields {
+    field_path   = "approvers"
+    array_config = "CONTAINS"
   }
   fields {
     field_path = "created_at"

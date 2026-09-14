@@ -381,3 +381,12 @@ async def test_publish_increments_version(service):
     assert (v1.version, v2.version) == (1, 2)
     agent, latest = await service.get_agent("analyst")
     assert agent.latest_version == 2 and latest.purpose == "v2"
+
+
+async def test_list_sessions_by_approver(service, agent):
+    mine = await service.create_session(
+        "analyst", "hi", operator="alice@example.com", client_request_id="r1", approvers=["lead@example.com"]
+    )
+    await service.create_session("analyst", "hi", operator="bob@example.com", client_request_id="r2")
+    assert [s.session_id for s in await service.list_sessions(approver="lead@example.com")] == [mine.session_id]
+    assert await service.list_sessions(approver="alice@example.com") == []

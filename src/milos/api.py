@@ -8,7 +8,7 @@ IAM restricts invokers, and runners additionally present the session token in
 """
 
 import secrets
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
@@ -175,7 +175,10 @@ def _public(service: Service, *, iap: IapVerifier | None, directory: Directory |
         )
 
     @router.get("/sessions")
-    async def list_sessions(user: User) -> list[Session]:
+    async def list_sessions(user: User, role: Literal["operator", "approver"] = "operator") -> list[Session]:
+        """`role=operator`: sessions the caller started; `role=approver`: sessions naming the caller as approver."""
+        if role == "approver":
+            return await service.list_sessions(approver=user.email)
         return await service.list_sessions(operator=user.email)
 
     @router.get("/sessions/{session_id}")
