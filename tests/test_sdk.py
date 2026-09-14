@@ -23,8 +23,7 @@ from milos import (
 from milos.api import create_app
 from milos.auth import IAP_HEADER
 from milos.client import Client
-from milos.models import EventType, SessionStatus, StopReason
-from milos.service import RunnerEvent
+from milos.models import EventType, RunnerEvent, SessionStatus, StopReason
 
 from .test_api import FakeIap
 
@@ -56,9 +55,9 @@ async def finish_turn(service, session_id: str, text: str) -> None:
     lease = session.lease.token
     poll = await service.poll(session_id, lease_token=lease)
     await service.ack(session_id, lease_token=lease, seq=max(e.seq for e in poll.events))
-    await service.report(session_id, [RunnerEvent(EventType.AGENT_MESSAGE, {"text": text})], lease_token=lease)
+    await service.report(session_id, [RunnerEvent(type=EventType.AGENT_MESSAGE, payload={"text": text})], lease_token=lease)
     usage = {"num_turns": 1, "duration_ms": 5, "total_cost_usd": 0.01}
-    await service.report(session_id, [RunnerEvent(EventType.SESSION_USAGE, usage)], lease_token=lease)
+    await service.report(session_id, [RunnerEvent(type=EventType.SESSION_USAGE, payload=usage)], lease_token=lease)
     await service.finish(session_id, lease_token=lease, stop_reason=StopReason.END_TURN)
 
 
@@ -108,7 +107,7 @@ async def test_can_use_tool_decides_parked_calls_as_the_approver(app, agent, ser
             if current.status == SessionStatus.RUNNING and current.lease and current.lease.token != lease:
                 break
             await asyncio.sleep(0.01)
-        result = RunnerEvent(EventType.TOOL_RESULT, {"outcome": "succeeded", "summary": "gone"}, tool_use_id="t1")
+        result = RunnerEvent(type=EventType.TOOL_RESULT, payload={"outcome": "succeeded", "summary": "gone"}, tool_use_id="t1")
         await service.report(sid, [result], lease_token=current.lease.token)
         await finish_turn(service, sid, "deleted")
 

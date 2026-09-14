@@ -40,11 +40,10 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import HookEvent, McpHttpServerConfig, McpServerConfig
 
-from .connector import MCP_PATH
-from .control import Control, GoogleIdentity, Identity, auth_headers
-from .models import FORBIDDEN_TOOLS, AgentVersion, EventType, StopReason, sha256_text
-from .service import RunnerEvent
-from .settings import RunnerSettings
+from .control import Control
+from .http import GoogleIdentity, Identity, auth_headers
+from .models import FORBIDDEN_TOOLS, AgentVersion, EventType, PermissionRequest, RunnerEvent, StopReason, sha256_text
+from .settings import MCP_PATH, RunnerSettings
 from .snapshots import Blobs, GcsBlobs, restore, save
 
 DISALLOWED_TOOLS = [*FORBIDDEN_TOOLS]
@@ -81,11 +80,12 @@ class Gate:
         args = input_data.get("tool_input") or {}
         tool_use_id = tool_use_id or sha256_text(f"{tool_name}:{args}")[:24]
         try:
-            decision, reason = await self._control.permit(tool_use_id, tool_name, args)
+            answer = await self._control.permit(PermissionRequest(tool_use_id=tool_use_id, tool_name=tool_name, args=args))
         except Exception as error:  # the API is unreachable: fail closed
             self.denied.append(tool_use_id)
             return _hook_output("deny", f"permission service unavailable: {error}")
-        match decision:
+        reason = answer.reason
+        match answer.outcome:
             case "allow":
                 return _hook_output("allow", reason)
             case "require_confirmation":
@@ -258,12 +258,12 @@ class Run:
         match message:
             case AssistantMessage(content=blocks):
                 if text := "\n".join(b.text for b in blocks if isinstance(b, TextBlock) and b.text):
-                    await self.control.report([RunnerEvent(EventType.AGENT_MESSAGE, {"text": text})])
+                    await self.control.report([RunnerEvent(type=EventType.AGENT_MESSAGE, payload={"text": text})])
             case UserMessage(content=list() as blocks):
                 results = [
                     RunnerEvent(
-                        EventType.TOOL_RESULT,
-                        {"outcome": "failed" if b.is_error else "succeeded", "summary": _summary(b.content)},
+                        type=EventType.TOOL_RESULT,
+                        payload={"outcome": "failed" if b.is_error else "succeeded", "summary": _summary(b.content)},
                         tool_use_id=b.tool_use_id,
                     )
                     for b in blocks
@@ -281,7 +281,7 @@ class Run:
                     "total_cost_usd": message.total_cost_usd,
                     "terminal_reason": message.terminal_reason,
                 }
-                await self.control.report([RunnerEvent(EventType.SESSION_USAGE, usage)])
+                await self.control.report([RunnerEvent(type=EventType.SESSION_USAGE, payload=usage)])
 
     @contextlib.asynccontextmanager
     async def _watching(self, client: Any) -> AsyncIterator[None]:

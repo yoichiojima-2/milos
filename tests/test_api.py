@@ -66,11 +66,11 @@ async def test_approval_over_http(public, internal, service, session, tokens):
     sid = session.session_id
     headers = {"X-Milos-Session": tokens.issue(sid), "X-Milos-Lease": session.lease.token}
     permit = await internal.post(
-        f"/internal/sessions/{sid}/permit",
+        f"/internal/sessions/{sid}/permissions",
         json={"tool_use_id": "t1", "tool_name": "Bash", "args": {"command": "ls"}},
         headers=headers,
     )
-    assert permit.json()["decision"] == "require_confirmation"
+    assert permit.json()["outcome"] == "require_confirmation"
     own = await public.post(
         f"/v1/sessions/{sid}/approvals",
         json={"tool_use_id": "t1", "decision": "allow"},
@@ -125,7 +125,7 @@ async def test_connector_permission_check(internal, service, session, tokens):
     sid = session.session_id
     headers = {"X-Milos-Session": tokens.issue(sid), "X-Milos-Lease": session.lease.token}
     await internal.post(
-        f"/internal/sessions/{sid}/permit",
+        f"/internal/sessions/{sid}/permissions",
         json={"tool_use_id": "t1", "tool_name": "Read", "args": {"path": "x"}},
         headers=headers,
     )

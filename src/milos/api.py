@@ -7,81 +7,40 @@ IAM restricts invokers, and runners additionally present the session token in
 `X-Milos-Session` plus their lease token in `X-Milos-Lease`.
 """
 
-import secrets
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 
 from .audit import CloudAuditLog, StderrAuditLog
 from .auth import IAP_HEADER, CloudIdentityDirectory, Directory, IapVerifier, Principal, SessionTokens
 from .errors import Forbidden, MilosError, Unauthorized
 from .jobs import CloudRunJobs, NoJobs
-from .models import AgentVersion, Approval, Event, EventType, Published, Session, StopReason, ToolDecision
-from .service import RunnerEvent, Service
+from .models import (
+    Ack,
+    Approval,
+    Event,
+    Finish,
+    Inspection,
+    NewApproval,
+    NewInterrupt,
+    NewMessage,
+    NewSession,
+    PermissionAnswer,
+    PermissionLookup,
+    PermissionRequest,
+    Polled,
+    Published,
+    RunnerContext,
+    RunnerEvent,
+    Session,
+    SnapshotPointer,
+)
+from .service import Service
 from .settings import ApiSettings
 from .store import FirestoreStore
 
 SCHEDULER_ACTOR = "scheduler"
-
-ClientRequestId = Annotated[str, Field(default_factory=lambda: secrets.token_hex(8))]
-
-
-class CreateSession(BaseModel):
-    agent_id: str
-    message: str
-    client_request_id: ClientRequestId
-    viewers: list[str] = Field(default_factory=list)
-    approvers: list[str] = Field(default_factory=list)
-
-
-class SendMessage(BaseModel):
-    text: str
-    client_request_id: ClientRequestId
-
-
-class Interrupt(BaseModel):
-    client_request_id: ClientRequestId
-
-
-class Confirm(BaseModel):
-    tool_use_id: str
-    decision: ToolDecision
-
-
-class Permit(BaseModel):
-    tool_use_id: str
-    tool_name: str
-    args: dict[str, Any] = Field(default_factory=dict)
-
-
-class Ack(BaseModel):
-    seq: int
-
-
-class RunnerEventIn(BaseModel):
-    type: EventType
-    payload: dict[str, Any] = Field(default_factory=dict)
-    tool_use_id: str | None = None
-
-
-class Snapshot(BaseModel):
-    number: int
-
-
-class Finish(BaseModel):
-    stop_reason: StopReason
-
-
-class RunnerContext(BaseModel):
-    session: Session
-    version: AgentVersion
-
-
-class Polled(BaseModel):
-    stop: bool
-    events: list[Event]
 
 
 def create_app(
@@ -158,7 +117,7 @@ def _public(service: Service, *, iap: IapVerifier | None, directory: Directory |
         return Published(agent=agent, version=version)
 
     @router.post("/sessions", status_code=201)
-    async def create_session(body: CreateSession, user: User) -> Session:
+    async def create_session(body: NewSession, user: User) -> Session:
         _, version = await service.get_agent(body.agent_id)
         await require_member(user.email, version.allowed_groups, f"{user.email} may not start {body.agent_id}")
         for approver in body.approvers:
@@ -188,17 +147,17 @@ def _public(service: Service, *, iap: IapVerifier | None, directory: Directory |
         return await service.events(session.session_id, after=after)
 
     @router.post("/sessions/{session_id}/messages", status_code=201)
-    async def send(session: Operated, body: SendMessage, user: User) -> Event:
+    async def send(session: Operated, body: NewMessage, user: User) -> Event:
         return await service.accept_message(
             session.session_id, body.text, actor=user.email, client_request_id=body.client_request_id
         )
 
     @router.post("/sessions/{session_id}/interrupt", status_code=201)
-    async def interrupt(session: Operated, body: Interrupt, user: User) -> Event:
+    async def interrupt(session: Operated, body: NewInterrupt, user: User) -> Event:
         return await service.interrupt(session.session_id, actor=user.email, client_request_id=body.client_request_id)
 
     @router.post("/sessions/{session_id}/approvals", status_code=201)
-    async def confirm(session_id: str, body: Confirm, user: User) -> Approval:
+    async def confirm(session_id: str, body: NewApproval, user: User) -> Approval:
         # Approvers need not be participants; membership of the agent's groups is what qualifies them.
         session = await service.get_session(session_id)
         _, version = await service.get_agent(session.agent_id)
@@ -233,7 +192,7 @@ def _internal(service: Service, *, tokens: SessionTokens) -> APIRouter:
 
     @router.post("/sessions", status_code=201)
     async def scheduled_session(
-        body: CreateSession,
+        body: NewSession,
         job: Annotated[str | None, Header(alias="X-CloudScheduler-JobName")] = None,
         scheduled_at: Annotated[str | None, Header(alias="X-CloudScheduler-ScheduleTime")] = None,
     ) -> Session:
@@ -248,7 +207,7 @@ def _internal(service: Service, *, tokens: SessionTokens) -> APIRouter:
         )
 
     @router.post("/inspect")
-    async def inspect() -> dict[str, list[str]]:
+    async def inspect() -> Inspection:
         return await service.inspect()
 
     @router.get("/sessions/{session_id}")
@@ -256,41 +215,38 @@ def _internal(service: Service, *, tokens: SessionTokens) -> APIRouter:
         session, version = await service.context(session_id)
         return RunnerContext(session=session, version=version)
 
-    @router.post("/sessions/{session_id}/permit")
-    async def permit(session_id: Owned, lease: Lease, body: Permit) -> dict[str, str]:
+    @router.post("/sessions/{session_id}/permissions")
+    async def permit(session_id: Owned, lease: Lease, body: PermissionRequest) -> PermissionAnswer:
         decision = await service.permit(
             session_id, lease_token=lease, tool_use_id=body.tool_use_id, tool_name=body.tool_name, args=body.args
         )
-        return {"decision": decision.kind, "reason": decision.reason}
+        return PermissionAnswer(outcome=decision.kind, reason=decision.reason)
 
     @router.post("/sessions/{session_id}/poll")
     async def poll(session_id: Owned, lease: Lease) -> Polled:
-        result = await service.poll(session_id, lease_token=lease)
-        return Polled(stop=result.stop, events=result.events)
+        return await service.poll(session_id, lease_token=lease)
 
     @router.post("/sessions/{session_id}/ack")
-    async def ack(session_id: Owned, lease: Lease, body: Ack) -> dict[str, str]:
-        await service.ack(session_id, lease_token=lease, seq=body.seq)
-        return {"status": "ok"}
+    async def ack(session_id: Owned, lease: Lease, body: Ack) -> Session:
+        return await service.ack(session_id, lease_token=lease, seq=body.seq)
 
     @router.post("/sessions/{session_id}/events", status_code=201)
-    async def report(session_id: Owned, lease: Lease, body: list[RunnerEventIn]) -> list[Event]:
-        return await service.report(session_id, [RunnerEvent(**e.model_dump()) for e in body], lease_token=lease)
+    async def report(session_id: Owned, lease: Lease, body: list[RunnerEvent]) -> list[Event]:
+        return await service.report(session_id, body, lease_token=lease)
 
     @router.post("/sessions/{session_id}/snapshot")
-    async def snapshot(session_id: Owned, lease: Lease, body: Snapshot) -> dict[str, str]:
-        await service.advance_snapshot(session_id, lease_token=lease, number=body.number)
-        return {"status": "ok"}
+    async def snapshot(session_id: Owned, lease: Lease, body: SnapshotPointer) -> Session:
+        return await service.advance_snapshot(session_id, lease_token=lease, number=body.number)
 
     @router.post("/sessions/{session_id}/finish")
     async def finish(session_id: Owned, lease: Lease, body: Finish) -> Session:
         return await service.finish(session_id, lease_token=lease, stop_reason=body.stop_reason)
 
     @router.get("/sessions/{session_id}/permissions")
-    async def permission(session_id: Owned, tool_name: str, args_sha256: str) -> dict[str, Any]:
+    async def permission(session_id: Owned, tool_name: str, args_sha256: str) -> PermissionLookup:
         """Connector check: is this exact call permitted under the current lease?"""
         found = await service.permission(session_id, tool_name=tool_name, args_sha256=args_sha256)
-        return {"permitted": found is not None, "tool_use_id": found.tool_use_id if found else None}
+        return PermissionLookup(permitted=found is not None, tool_use_id=found.tool_use_id if found else None)
 
     return router
 

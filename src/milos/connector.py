@@ -16,7 +16,7 @@ through the permission it consumed.
 import asyncio
 import inspect
 import ipaddress
-import os
+import logging
 import socket
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, cast
@@ -25,37 +25,42 @@ from urllib.parse import urlsplit
 import httpx
 from mcp.server.mcpserver import Context, MCPServer
 
-from .control import GoogleIdentity, Identity, auth_headers
 from .errors import Forbidden
-from .models import sha256_json
+from .http import Api, ApiError, GoogleIdentity, Identity
+from .models import PermissionLookup, sha256_json
+from .settings import MCP_PATH, ConnectorSettings
 
 MAX_URL_LENGTH = 2048
 MAX_REDIRECTS = 3
 MAX_RESPONSE_BYTES = 1_000_000
 METADATA_HOSTS = {"metadata.google.internal", "169.254.169.254"}
-MCP_PATH = "/mcp"  # where a connector mounts its MCP transport; the runner appends it to the service URL
+log = logging.getLogger(__name__)
 
 
 class PermissionCheck(Protocol):
     async def permitted(self, session_token: str, tool_name: str, args: dict[str, Any]) -> bool: ...
 
 
-class ApiPermissionCheck:
+class ApiPermissionCheck(Api):
     """Asks the internal API; authenticates as the connector's own service account."""
 
     def __init__(self, api_url: str, *, identity: Identity | None = None) -> None:
-        self._api_url = api_url.rstrip("/")
-        self._identity = identity
-        self._http = httpx.AsyncClient(base_url=self._api_url, timeout=15)
+        super().__init__(api_url, prefix="/internal/sessions", identity=identity, timeout=15)
 
     async def permitted(self, session_token: str, tool_name: str, args: dict[str, Any]) -> bool:
         session_id = session_token.rsplit(".", 1)[0]
-        response = await self._http.get(
-            f"/internal/sessions/{session_id}/permissions",
-            params={"tool_name": tool_name, "args_sha256": sha256_json(args)},
-            headers=await auth_headers(self._identity, self._api_url, {"X-Milos-Session": session_token}),
-        )
-        return response.status_code == 200 and bool(response.json().get("permitted"))
+        try:
+            found = await self.one(
+                PermissionLookup,
+                "GET",
+                f"/{session_id}/permissions",
+                params={"tool_name": tool_name, "args_sha256": sha256_json(args)},
+                headers={"X-Milos-Session": session_token},
+            )
+        except ApiError as error:
+            log.warning("permission check for %s in %s failed: %s", tool_name, session_id, error)
+            return False
+        return found.permitted
 
 
 class Connector:
@@ -204,8 +209,9 @@ def internal(check: PermissionCheck, *, data: DataFiles | None = None) -> Connec
 
 
 def build_from_env(name: str) -> Any:
-    check = ApiPermissionCheck(os.environ["MILOS_API_URL"], identity=GoogleIdentity())
+    settings = ConnectorSettings.from_env()
+    check = ApiPermissionCheck(settings.api_url, identity=GoogleIdentity())
     if name == "egress":
         return egress(check).app()
-    bucket = os.environ.get("MILOS_DATA_BUCKET")
-    return internal(check, data=GcsDataFiles(bucket) if bucket else None).app()
+    data = GcsDataFiles(settings.data_bucket) if settings.data_bucket else None
+    return internal(check, data=data).app()

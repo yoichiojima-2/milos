@@ -21,10 +21,10 @@ import fnmatch
 import secrets
 import uuid
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
-from typing import Any, Literal
+from typing import Any
 
 from .audit import AuditLog
 from .auth import SessionTokens, new_token
@@ -36,11 +36,15 @@ from .models import (
     Agent,
     AgentVersion,
     Approval,
+    DecisionKind,
     Document,
     Event,
     EventType,
+    Inspection,
     Lease,
     Permission,
+    Polled,
+    RunnerEvent,
     Session,
     SessionStatus,
     StopReason,
@@ -57,8 +61,6 @@ STALE_LEASE = timedelta(seconds=60)
 MAX_PAYLOAD_BYTES = 200_000
 ACTIVE_STATUSES = [SessionStatus.RUNNING.value, SessionStatus.RESCHEDULING.value]
 
-type DecisionKind = Literal["allow", "require_confirmation", "deny", "stop"]
-
 
 @dataclass(frozen=True, slots=True)
 class Decision:
@@ -66,21 +68,6 @@ class Decision:
     reason: str
     tool_use_id: str
     approval_tool_use_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Poll:
-    stop: bool
-    events: list[Event]
-
-
-@dataclass(slots=True)
-class RunnerEvent:
-    """What a runner may append: agent.message, tool.result, session.usage."""
-
-    type: EventType
-    payload: dict[str, Any] = field(default_factory=dict)
-    tool_use_id: str | None = None
 
 
 def new_session_id() -> str:
@@ -386,28 +373,30 @@ class Service:
                 await self.store.transaction(lambda tx: self._park(tx, session_id, lease_token, tool_use_id, version))
         return decision
 
-    async def poll(self, session_id: str, *, lease_token: str) -> Poll:
+    async def poll(self, session_id: str, *, lease_token: str) -> Polled:
         """Runner heartbeat: unconsumed user events plus the stop signal."""
         now = self.now()
 
-        async def tx_fn(tx: Transaction) -> Poll:
+        async def tx_fn(tx: Transaction) -> Polled:
             session = await self._leased(tx, session_id, lease_token)
             agent = await self._agent(tx, session.agent_id)
             # Every read before the write: Firestore rejects a read after a write in a transaction.
             docs = await tx.query(f"sessions/{session_id}/events", where=[("seq", ">", session.consumed_seq)], order_by="seq")
             events = [Event.model_validate(d) for d in docs if d["type"] in USER_EVENTS]
             tx.update(f"sessions/{session_id}", {"lease.last_poll_at": now, "updated_at": now})
-            return Poll(stop=session.status == SessionStatus.TERMINATED or not agent.enabled, events=events)
+            return Polled(stop=session.status == SessionStatus.TERMINATED or not agent.enabled, events=events)
 
         return await self.store.transaction(tx_fn)
 
-    async def ack(self, session_id: str, *, lease_token: str, seq: int) -> None:
-        async def tx_fn(tx: Transaction) -> None:
+    async def ack(self, session_id: str, *, lease_token: str, seq: int) -> Session:
+        async def tx_fn(tx: Transaction) -> Session:
             session = await self._leased(tx, session_id, lease_token)
             if seq > session.consumed_seq:
                 tx.update(f"sessions/{session_id}", {"consumed_seq": seq, "updated_at": self.now()})
+                return session.model_copy(update={"consumed_seq": seq})
+            return session
 
-        await self.store.transaction(tx_fn)
+        return await self.store.transaction(tx_fn)
 
     async def report(self, session_id: str, events: list[RunnerEvent], *, lease_token: str) -> list[Event]:
         for item in events:
@@ -424,14 +413,15 @@ class Service:
 
         return await self.store.transaction(tx_fn)
 
-    async def advance_snapshot(self, session_id: str, *, lease_token: str, number: int) -> None:
-        async def tx_fn(tx: Transaction) -> None:
+    async def advance_snapshot(self, session_id: str, *, lease_token: str, number: int) -> Session:
+        async def tx_fn(tx: Transaction) -> Session:
             session = await self._leased(tx, session_id, lease_token)
             if number != session.snapshot + 1:
                 raise Invalid(f"snapshot {number} does not follow {session.snapshot}")
             tx.update(f"sessions/{session_id}", {"snapshot": number, "updated_at": self.now()})
+            return session.model_copy(update={"snapshot": number})
 
-        await self.store.transaction(tx_fn)
+        return await self.store.transaction(tx_fn)
 
     async def finish(self, session_id: str, *, lease_token: str, stop_reason: StopReason) -> Session:
         """Release the lease. Input that arrived during shutdown starts a fresh run."""
@@ -478,7 +468,7 @@ class Service:
 
     # --- inspection (Cloud Scheduler) --------------------------------------
 
-    async def inspect(self) -> dict[str, list[str]]:
+    async def inspect(self) -> Inspection:
         """Expire approvals and restart stalled runs. Idempotent; runs every minute."""
         now = self.now()
         report: dict[str, list[str]] = {"expired": [], "restarted": [], "attention": []}
@@ -494,7 +484,7 @@ class Service:
             session = Session.model_validate(doc)
             if self._stalled(session, now) and (outcome := await self._restart(session.session_id)):
                 report[outcome].append(session.session_id)
-        return report
+        return Inspection(**report)
 
     async def _expire(self, session_id: str) -> bool:
         async def tx_fn(tx: Transaction) -> Session | None:

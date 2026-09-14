@@ -18,6 +18,7 @@ Collections:
 import fnmatch
 import hashlib
 import json
+import secrets
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -282,3 +283,98 @@ class Approval(Document):
     timed_out: bool = False
     tool_name: str
     args_sha256: str  # a re-issued call is matched by content, never by id
+
+
+# --- wire types: what the API accepts and returns --------------------------------
+#
+# Shared by `api.py`, `client.py` and `control.py`, so the runner and the CLI never
+# import the service. Bodies that create something carry a `client_request_id`;
+# a caller that wants a retry to be safe passes its own.
+
+type DecisionKind = Literal["allow", "require_confirmation", "deny", "stop"]
+
+
+def _request_id() -> str:
+    return secrets.token_hex(8)
+
+
+class Wire(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class NewSession(Wire):
+    agent_id: str
+    message: str
+    client_request_id: str = Field(default_factory=_request_id)
+    viewers: list[str] = Field(default_factory=list)
+    approvers: list[str] = Field(default_factory=list)
+
+
+class NewMessage(Wire):
+    text: str
+    client_request_id: str = Field(default_factory=_request_id)
+
+
+class NewInterrupt(Wire):
+    client_request_id: str = Field(default_factory=_request_id)
+
+
+class NewApproval(Wire):
+    tool_use_id: str
+    decision: ToolDecision
+
+
+class PermissionRequest(Wire):
+    """The runner's `PreToolUse` question."""
+
+    tool_use_id: str
+    tool_name: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class PermissionAnswer(Wire):
+    outcome: DecisionKind
+    reason: str
+
+
+class PermissionLookup(Wire):
+    """A connector's check: is this exact call permitted under the current lease?"""
+
+    permitted: bool
+    tool_use_id: str | None = None
+
+
+class RunnerEvent(Wire):
+    """What a runner may append: agent.message, tool.result, session.usage."""
+
+    type: EventType
+    payload: dict[str, Any] = Field(default_factory=dict)
+    tool_use_id: str | None = None
+
+
+class Ack(Wire):
+    seq: int
+
+
+class SnapshotPointer(Wire):
+    number: int
+
+
+class Finish(Wire):
+    stop_reason: StopReason
+
+
+class RunnerContext(Wire):
+    session: Session
+    version: AgentVersion
+
+
+class Polled(Wire):
+    stop: bool
+    events: list[Event]
+
+
+class Inspection(Wire):
+    expired: list[str] = Field(default_factory=list)
+    restarted: list[str] = Field(default_factory=list)
+    attention: list[str] = Field(default_factory=list)

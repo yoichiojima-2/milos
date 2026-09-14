@@ -10,6 +10,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Self
 
+MCP_PATH = "/mcp"  # where a connector mounts its MCP transport; the runner appends it to the service URL
+
 
 def _env(name: str, default: str | None = None) -> str:
     value = os.environ.get(name, default)
@@ -56,7 +58,7 @@ class ApiSettings:
     def runner_env(self) -> dict[str, str]:
         """Environment every runner execution receives, on top of the per-session tokens."""
         return {
-            "MILOS_API_URL": self.internal_url,
+            "MILOS_INTERNAL_API_URL": self.internal_url,
             "MILOS_PROJECT": self.project,
             "MILOS_SNAPSHOT_BUCKET": self.snapshot_bucket,
             "MILOS_CONNECTOR_URLS": json.dumps(self.connector_urls),
@@ -88,7 +90,7 @@ class RunnerSettings:
             session_id=_env("MILOS_SESSION_ID"),
             session_token=_env("MILOS_SESSION_TOKEN"),
             lease_token=_env("MILOS_LEASE_TOKEN"),
-            api_url=_env("MILOS_API_URL"),
+            api_url=_env("MILOS_INTERNAL_API_URL"),
             project=_env("MILOS_PROJECT"),
             runner_id=_env("MILOS_RUNNER_ID", "local"),
             snapshot_bucket=_env("MILOS_SNAPSHOT_BUCKET", ""),
@@ -99,3 +101,13 @@ class RunnerSettings:
             idle_seconds=float(_env("MILOS_IDLE_SECONDS", "30")),
             poll_seconds=float(_env("MILOS_POLL_SECONDS", "2")),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ConnectorSettings:
+    api_url: str  # the internal API, for permission checks
+    data_bucket: str | None = None  # internal connector only: the approved data bucket
+
+    @classmethod
+    def from_env(cls) -> Self:
+        return cls(api_url=_env("MILOS_INTERNAL_API_URL"), data_bucket=os.environ.get("MILOS_DATA_BUCKET"))

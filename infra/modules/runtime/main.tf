@@ -13,11 +13,11 @@ locals {
   connector_urls = merge(var.connector_urls, { internal = local.connector_url })
 
   runner_env = {
-    MILOS_API_URL         = local.internal_url
-    MILOS_PROJECT         = var.project
-    MILOS_SNAPSHOT_BUCKET = google_storage_bucket.snapshots.name
-    MILOS_CONNECTOR_URLS  = jsonencode(local.connector_urls)
-    MILOS_VERTEX_REGION   = var.vertex_region
+    MILOS_INTERNAL_API_URL = local.internal_url
+    MILOS_PROJECT          = var.project
+    MILOS_SNAPSHOT_BUCKET  = google_storage_bucket.snapshots.name
+    MILOS_CONNECTOR_URLS   = jsonencode(local.connector_urls)
+    MILOS_VERTEX_REGION    = var.vertex_region
   }
 
   api_env = {
@@ -577,7 +577,7 @@ resource "google_cloud_run_v2_service" "connector" {
       args  = ["serve", "connector", "--name", "internal"]
 
       env {
-        name  = "MILOS_API_URL"
+        name  = "MILOS_INTERNAL_API_URL"
         value = local.internal_url
       }
 

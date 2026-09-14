@@ -5,8 +5,7 @@ from __future__ import annotations
 import pytest
 
 from milos.errors import AlreadyExists, Conflict, Forbidden, Invalid, NotFound, Stopped
-from milos.models import EventType, SessionStatus, StopReason
-from milos.service import RunnerEvent
+from milos.models import EventType, RunnerEvent, SessionStatus, StopReason
 
 from .conftest import definition
 
@@ -96,7 +95,7 @@ async def test_stale_lease_is_rejected(service, session):
     with pytest.raises(Forbidden):
         await service.poll(sid, lease_token="old")
     with pytest.raises(Forbidden):
-        await service.report(sid, [RunnerEvent(EventType.AGENT_MESSAGE, {"text": "x"})], lease_token="old")
+        await service.report(sid, [RunnerEvent(type=EventType.AGENT_MESSAGE, payload={"text": "x"})], lease_token="old")
     with pytest.raises(Forbidden):
         await service.permit(sid, lease_token="old", tool_use_id="t", tool_name="Read", args={})
 
@@ -105,7 +104,7 @@ async def test_runner_may_only_append_its_own_event_types(service, session):
     with pytest.raises(Invalid):
         await service.report(
             session.session_id,
-            [RunnerEvent(EventType.USER_MESSAGE, {"text": "forged"})],
+            [RunnerEvent(type=EventType.USER_MESSAGE, payload={"text": "forged"})],
             lease_token=lease(session),
         )
 
@@ -240,7 +239,7 @@ async def test_expired_approval_is_recorded_as_timed_out_deny(service, session, 
     await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Bash", args={})
     clock.advance(601)
     report = await service.inspect()
-    assert report["expired"] == [sid]
+    assert report.expired == [sid]
     approval = store.docs[f"sessions/{sid}/approvals/t1"]
     assert approval["decision"] == "deny" and approval["timed_out"] is True
     with pytest.raises(Invalid):
@@ -334,7 +333,7 @@ async def test_snapshot_pointer_advances_in_order(service, session):
 async def test_stalled_run_is_rescheduled_once_then_needs_attention(service, session, clock, jobs):
     sid = session.session_id
     clock.advance(61)
-    assert (await service.inspect())["restarted"] == [sid]
+    assert (await service.inspect()).restarted == [sid]
     rescheduled = await service.get_session(sid)
     assert rescheduled.status == SessionStatus.RESCHEDULING
     assert rescheduled.lease.token != lease(session)
@@ -343,13 +342,13 @@ async def test_stalled_run_is_rescheduled_once_then_needs_attention(service, ses
     with pytest.raises(Forbidden):
         await service.report(
             sid,
-            [RunnerEvent(EventType.AGENT_MESSAGE, {"text": "late"})],
+            [RunnerEvent(type=EventType.AGENT_MESSAGE, payload={"text": "late"})],
             lease_token=lease(session),
         )
     # the new runner checks in and the session is running again
     await service.poll(sid, lease_token=rescheduled.lease.token)
     clock.advance(61)
-    assert (await service.inspect())["attention"] == [sid]
+    assert (await service.inspect()).attention == [sid]
     assert (await service.get_session(sid)).stop_reason == StopReason.NEEDS_ATTENTION
 
 
@@ -357,7 +356,7 @@ async def test_budget_reached_is_recorded(service, session):
     sid = session.session_id
     await service.report(
         sid,
-        [RunnerEvent(EventType.SESSION_USAGE, {"total_cost_usd": 5.2, "num_turns": 20})],
+        [RunnerEvent(type=EventType.SESSION_USAGE, payload={"total_cost_usd": 5.2, "num_turns": 20})],
         lease_token=lease(session),
     )
     await service.finish(sid, lease_token=lease(session), stop_reason=StopReason.BUDGET_REACHED)
