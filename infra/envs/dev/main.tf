@@ -108,6 +108,7 @@ module "runtime" {
   subnet_id                    = module.network.subnet_id
   agent_ids                    = var.agent_ids
   users_group                  = var.users_group
+  admin_group                  = var.admin_group
   operator_service_accounts    = [for sa in google_service_account.operators : sa.email]
   iap_audience                 = var.iap_audience
   connector_urls               = module.egress.connector_urls

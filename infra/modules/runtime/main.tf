@@ -29,6 +29,8 @@ locals {
     MILOS_CONNECTOR_URLS    = jsonencode(local.connector_urls)
     MILOS_VERTEX_REGION     = var.vertex_region
     MILOS_IAP_AUDIENCE      = var.iap_audience
+    MILOS_ADMIN_GROUP       = var.admin_group
+    MILOS_SCHEDULER_SA      = google_service_account.scheduler.email
   }
 }
 
@@ -87,38 +89,7 @@ resource "google_firestore_index" "sessions_by_approver" {
   }
 }
 
-# `finish` looks for a queued user message after the consumed sequence:
-# equality on type plus a range on seq.
-resource "google_firestore_index" "events_queued_messages" {
-  project    = var.project
-  database   = google_firestore_database.default.name
-  collection = "events"
 
-  fields {
-    field_path = "type"
-    order      = "ASCENDING"
-  }
-  fields {
-    field_path = "seq"
-    order      = "ASCENDING"
-  }
-}
-
-# Approvals find the tool request by id: two equalities on one collection.
-resource "google_firestore_index" "events_tool_requests" {
-  project    = var.project
-  database   = google_firestore_database.default.name
-  collection = "events"
-
-  fields {
-    field_path = "tool_use_id"
-    order      = "ASCENDING"
-  }
-  fields {
-    field_path = "type"
-    order      = "ASCENDING"
-  }
-}
 
 resource "google_storage_bucket" "snapshots" {
   project                     = var.project

@@ -49,6 +49,7 @@ system_prompt: |
 
 ```sh
 milos agents list                       # what you may run, and which tools pause for approval
+milos agents publish deployments/dev/*.yaml   # admin group: validate locally, publish through the API
 milos run analyst "Summarise last week's numbers." --approver lead@example.com
 milos pending                           # as the approver: waiting calls with their arguments
 milos allow                             # decide; ids are needed only when several calls wait
@@ -79,19 +80,20 @@ async for message in query("Summarise last week's numbers.", options):
 
 ```
 src/milos/
-  models.py       Agent, AgentVersion (with the definition rules), Session, Event, Lease, Permission, Approval
+  models.py       documents (Agent, AgentVersion with its rules, Session, Event, Permission, Approval, Request) and wire types
   store.py        transactional document store over Firestore (fake in tests/)
   service.py      the execution contract: every state change, every invariant
-  api.py          FastAPI; public (IAP) and internal (session + lease tokens) routes
-  auth.py         IAP assertions, session tokens, group membership
+  access.py       who may view, operate, decide, administer
+  api.py          FastAPI; public (IAP) and internal (session + lease tokens) routes; applies access.py
+  auth.py         identity tokens (IAP assertion, Google ID token), session tokens, group membership
   audit.py        synchronous Cloud Logging entries
   jobs.py         Cloud Run Job launches
-  definitions.py  YAML definitions: loading, publishing, the registry
   runner.py       the job: SDK + PreToolUse hook, poll loop, snapshots
+  http.py         the one HTTP base for every client of the API
   control.py      the runner's client for the internal API
   snapshots.py    GCS snapshots of transcript and working directory
-  connector.py    MCP connectors with the permission check; web_fetch
-  client.py       client for the public API
+  connector.py    MCP connectors with the permission check; web_fetch, data files
+  client.py       client for the public API; sdk.py gives it the Agent SDK's shape
   cli.py          `milos`
 agents/           definitions
 infra/            Terraform: modules/{foundation,network,runtime,egress,logging,data,perimeter}, envs/dev
@@ -106,7 +108,8 @@ uv sync --group dev
 uv run pytest -q                                  # no credentials needed
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                                       # strict on src/milos
-uv run milos agents validate agents/*.yaml
+uv run milos agents validate agents/*.yaml deployments/*/*.yaml
+FIRESTORE_EMULATOR_HOST=localhost:8080 uv run pytest -m emulator   # the store against the real emulator
 ```
 
 The tests drive the real service through the real API with the SDK replaced by a scripted client (`tests/test_runner.py`), so the approval flow, the lease, the stop signal and the snapshot pointer are exercised end to end in memory. Firestore's transaction semantics that matter (create-only documents, dotted updates, rollback) are mirrored by `tests/fakes.py`; run the same suite against the emulator by setting `FIRESTORE_EMULATOR_HOST` before adding Firestore-specific tests.
@@ -122,7 +125,7 @@ FIRESTORE_EMULATOR_HOST=localhost:8080 uv run milos serve api
 
 ## Deploy
 
-See [docs/operations.md](docs/operations.md). In short: `terraform apply` in `infra/envs/dev` creates the four projects and everything in them, CI builds the one image, `milos agents publish` puts definitions in Firestore, and the first deploy has a short list of things to confirm on real hardware before data with any classification is connected.
+See [docs/operations.md](docs/operations.md). In short: `terraform apply` in `infra/envs/dev` creates the four projects and everything in them, CI builds the one image, `milos agents publish` publishes definitions through the API as the admin identity, and the first deploy has a short list of things to confirm on real hardware before data with any classification is connected.
 
 ## Status
 

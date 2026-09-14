@@ -8,6 +8,7 @@ vertex_region   = "us-east5"
 
 agent_ids   = ["analyst"]
 users_group = "agent-users@example.com"
+admin_group = "agent-admins@example.com" # publish, enable, disable; add milos-admin@<runtime>.iam.gserviceaccount.com
 
 # IAP assertion audience for the public Cloud Run service. Confirm on the
 # first deploy (docs/operations.md, "First deploy").

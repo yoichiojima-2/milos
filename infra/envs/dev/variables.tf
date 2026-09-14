@@ -34,6 +34,11 @@ variable "users_group" {
   type        = string
 }
 
+variable "admin_group" {
+  description = "Google group that may publish, enable and disable definitions; the milos-admin service account (CI) must be a member."
+  type        = string
+}
+
 variable "iap_audience" {
   description = "Expected audience of IAP assertions on the public service."
   type        = string
