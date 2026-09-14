@@ -2,7 +2,7 @@
 # group in a browser but rejects programmatic user tokens, so the CLI acts as a
 # service account that signs its own JWT (aud = the public service URL). Two
 # identities, because an approver must not be the session's operator. Both must
-# be in each definition's allowed_users.
+# be members of the users group (definitions authorise groups only).
 resource "google_service_account" "operators" {
   for_each     = toset(["operator", "approver"])
   project      = module.foundation.project_ids.runtime

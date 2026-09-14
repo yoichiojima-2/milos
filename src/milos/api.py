@@ -128,10 +128,8 @@ def _public(service: Service, *, iap: IapVerifier | None, directory: Directory |
 
     User = Annotated[Principal, Depends(principal)]
 
-    async def require_member(email: str, version: AgentVersion, message: str) -> None:
-        if email.lower() in version.allowed_users:
-            return
-        for group in version.allowed_groups:
+    async def require_member(email: str, groups: list[str], message: str) -> None:
+        for group in groups:
             if directory is not None and await directory.is_member(email, group):
                 return
         raise Forbidden(message)
@@ -162,9 +160,9 @@ def _public(service: Service, *, iap: IapVerifier | None, directory: Directory |
     @router.post("/sessions", status_code=201)
     async def create_session(body: CreateSession, user: User) -> Session:
         _, version = await service.get_agent(body.agent_id)
-        await require_member(user.email, version, f"{user.email} may not start {body.agent_id}")
+        await require_member(user.email, version.allowed_groups, f"{user.email} may not start {body.agent_id}")
         for approver in body.approvers:
-            await require_member(approver, version, f"approver {approver} is not allowed to use {body.agent_id}")
+            await require_member(approver, version.allowed_groups, f"approver {approver} is not allowed to use {body.agent_id}")
         return await service.create_session(
             body.agent_id,
             body.message,
@@ -198,10 +196,10 @@ def _public(service: Service, *, iap: IapVerifier | None, directory: Directory |
 
     @router.post("/sessions/{session_id}/approvals", status_code=201)
     async def confirm(session_id: str, body: Confirm, user: User) -> Approval:
-        # Approvers need not be participants; the agent's allowed groups or users qualify them.
+        # Approvers need not be participants; membership of the agent's groups is what qualifies them.
         session = await service.get_session(session_id)
         _, version = await service.get_agent(session.agent_id)
-        await require_member(user.email, version, f"{user.email} may not approve for {session.agent_id}")
+        await require_member(user.email, version.allowed_groups, f"{user.email} may not approve for {session.agent_id}")
         return await service.confirm(session_id, body.tool_use_id, body.decision, actor=user.email)
 
     @router.post("/sessions/{session_id}/terminate")

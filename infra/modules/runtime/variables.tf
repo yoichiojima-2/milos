@@ -45,7 +45,6 @@ variable "agent_ids" {
 variable "users_group" {
   description = "Google group allowed through IAP to the public API."
   type        = string
-  default     = null
 }
 
 variable "iap_audience" {
@@ -92,11 +91,6 @@ variable "alert_email" {
   default = null
 }
 
-variable "users" {
-  description = "Individual Google accounts allowed through IAP. Agent definitions must also allow them."
-  type        = list(string)
-  default     = []
-}
 
 variable "operator_service_accounts" {
   description = "Service accounts allowed through IAP to the public API, for CLI use where user tokens are not accepted (Google-managed OAuth client). Agent definitions must also allow them."

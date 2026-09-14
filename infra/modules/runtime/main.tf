@@ -383,12 +383,11 @@ resource "google_cloud_run_v2_service_iam_member" "iap_invokes_public" {
   member   = "serviceAccount:${google_project_service_identity.iap.email}"
 }
 
-# Everyone allowed through IAP: the group (dev) and/or individual accounts
-# (existing-project). Keyed by a stable name so adding one never moves another.
+# Everyone allowed through IAP: the users group plus the operator service
+# accounts (CLI). Keyed by a stable name so adding one never moves another.
 locals {
   iap_accessors = merge(
-    var.users_group == null ? {} : { group = "group:${var.users_group}" },
-    { for user in var.users : "user/${user}" => "user:${user}" },
+    { group = "group:${var.users_group}" },
     { for sa in var.operator_service_accounts : "sa/${sa}" => "serviceAccount:${sa}" },
   )
 }
@@ -401,11 +400,6 @@ resource "google_iap_web_cloud_run_service_iam_member" "users" {
   cloud_run_service_name = google_cloud_run_v2_service.public.name
   role                   = "roles/iap.httpsResourceAccessor"
   member                 = each.value
-}
-
-moved {
-  from = google_iap_web_cloud_run_service_iam_member.users
-  to   = google_iap_web_cloud_run_service_iam_member.users["group"]
 }
 
 # --- API, internal: runners, connectors, scheduler ---------------------------------

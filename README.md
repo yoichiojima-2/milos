@@ -102,7 +102,7 @@ uv sync --group dev
 uv run pytest -q                                  # 64 tests, no credentials
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                                       # strict on src/milos
-uv run milos agents validate agents/*.yaml deployments/*/*.yaml
+uv run milos agents validate agents/*.yaml
 ```
 
 The tests drive the real service through the real API with the SDK replaced by a scripted client (`tests/test_runner.py`), so the approval flow, the lease, the stop signal and the snapshot pointer are exercised end to end in memory. Firestore's transaction semantics that matter (create-only documents, dotted updates, rollback) are mirrored by `tests/fakes.py`; run the same suite against the emulator by setting `FIRESTORE_EMULATOR_HOST` before adding Firestore-specific tests.

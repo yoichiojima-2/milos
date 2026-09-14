@@ -25,9 +25,6 @@ max_budget_usd: 5.0
 max_concurrent_sessions: 2
 model: claude-sonnet-4-5-20250929
 runner_sa: milos-runner-analyst@milos-yo-runtime-dev.iam.gserviceaccount.com
-allowed_users:
-  - milos-operator@milos-yo-runtime-dev.iam.gserviceaccount.com
-  - milos-approver@milos-yo-runtime-dev.iam.gserviceaccount.com
 connectors:
   - internal
   - egress
