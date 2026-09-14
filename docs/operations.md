@@ -19,6 +19,8 @@ gcloud builds submit --project $(terraform output -json projects | jq -r .runtim
 terraform apply -var image=$REPO/milos:$(git rev-parse --short HEAD)
 ```
 
+Group membership is checked through the Cloud Identity API, which only shows a group's members to members: add `milos-api@<runtime>.iam.gserviceaccount.com` to `users_group` (and to `admin_group` when it is a different group), together with the operator, approver and admin identities. A lookup the API is not allowed to make fails loudly as a 500, never as a 403.
+
 Then publish the definitions through the API as the admin identity. Each definition's `runner_sa` must equal the identity Terraform created for it (`terraform output runner_service_accounts`), and `milos-admin@<runtime>.iam.gserviceaccount.com` must be a member of `admin_group` (a Workspace step):
 
 ```sh

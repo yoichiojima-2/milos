@@ -95,7 +95,7 @@ All projects sit under the department folder with Google-managed encryption.
 
 | Identity | May |
 | --- | --- |
-| API | Firestore; run the registered jobs with overrides; write logs; read the token key |
+| API | Firestore; run the registered jobs with overrides; write logs; read the token key; read group membership (a member of the users group) |
 | runner (per agent) | Vertex AI; the snapshot bucket; the internal API; package remotes |
 | scheduler | invoke the internal API; its identity is verified on the routes it uses |
 | admin group (people and CI) | publish, enable and disable definitions through the public API |
