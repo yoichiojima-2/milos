@@ -215,6 +215,7 @@ async def test_unreachable_api_denies_fail_closed(tokens, session, sdk, tmp_path
     gate = Gate(Down())  # type: ignore[arg-type]
     out = await gate.pre_tool_use({"tool_name": "Read", "tool_input": {}}, "t1", None)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert gate.stopped  # a runner that cannot reach the API does not keep going
 
 
 async def test_interrupt_during_turn_reaches_the_client(service, tokens, session, sdk, blobs, tmp_path, monkeypatch):

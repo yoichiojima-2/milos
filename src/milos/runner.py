@@ -20,6 +20,7 @@ hooks and skills out: the definition's system prompt is the only instruction.
 
 import asyncio
 import contextlib
+import logging
 import os
 import sys
 from collections.abc import AsyncIterator
@@ -47,6 +48,7 @@ from .settings import MCP_PATH, RunnerSettings
 from .snapshots import Blobs, GcsBlobs, restore, save
 
 DISALLOWED_TOOLS = [*FORBIDDEN_TOOLS]
+log = logging.getLogger(__name__)
 RESULT_SUMMARY_CHARS = 2_000
 
 
@@ -68,7 +70,6 @@ class Gate:
         self.client: Any = None  # set once the SDK client is open
         self.parked: str | None = None  # tool_use_id awaiting a human
         self.stopped = False
-        self.denied: list[str] = []
 
     def hooks(self) -> dict[HookEvent, list[HookMatcher]]:
         # The SDK types the hook input as a union of every event's TypedDict;
@@ -81,8 +82,9 @@ class Gate:
         tool_use_id = tool_use_id or sha256_json({"tool_name": tool_name, "args": args})[:24]
         try:
             answer = await self._control.permit(PermissionRequest(tool_use_id=tool_use_id, tool_name=tool_name, args=args))
-        except Exception as error:  # the API is unreachable: fail closed
-            self.denied.append(tool_use_id)
+        except Exception as error:  # the API is unreachable: fail closed, and stop rather than run blind
+            self.stopped = True
+            await self.interrupt()
             return _hook_output("deny", f"permission service unavailable: {error}")
         reason = answer.reason
         match answer.outcome:
@@ -95,7 +97,6 @@ class Gate:
             case Outcome.STOP:
                 self.stopped = True
                 await self.interrupt()
-        self.denied.append(tool_use_id)
         return _hook_output("deny", reason)
 
     async def can_use_tool(self, tool_name: str, _: dict[str, Any], __: Any) -> PermissionResult:
@@ -187,10 +188,11 @@ class Run:
         self.transcripts = Path(os.environ.get("HOME", "/home/sandbox")) / ".claude" / "projects"
 
     async def __call__(self) -> StopReason:
-        context = await self.control.context()
-        session, version = context.session, context.version
         stop_reason = StopReason.NEEDS_ATTENTION
+        session = None
         try:
+            context = await self.control.context()
+            session, version = context.session, context.version
             self.work_dir.mkdir(parents=True, exist_ok=True)
             manifest = await self._restore(session.session_id, session.snapshot) or {}
             options = build_options(
@@ -203,13 +205,14 @@ class Run:
             async with self.client_factory(options) as client:
                 self.gate.client = client
                 stop_reason = await self._loop(client)
-        except Exception as error:
-            print(f"run failed: {error}", file=sys.stderr)
+        except Exception:
+            log.exception("run failed")
         finally:
             # Every exit path releases the lease, crashes included. A snapshot
             # is attempted first; if it fails the previous one stays current.
-            with contextlib.suppress(Exception):
-                await self._snapshot(session.session_id, session.snapshot + 1)
+            if session is not None:
+                with contextlib.suppress(Exception):
+                    await self._snapshot(session.session_id, session.snapshot + 1)
             await self.control.finish(stop_reason)
         return stop_reason
 
@@ -272,7 +275,7 @@ class Run:
                 await self.control.report(results)
             case ResultMessage():
                 self.sdk_session_id = message.session_id
-                if "max_turns" in message.subtype or "budget" in message.subtype:
+                if message.subtype.startswith("error_max_"):  # error_max_turns, error_max_budget_usd
                     self.budget_reached = True
                 usage = {
                     "subtype": message.subtype,

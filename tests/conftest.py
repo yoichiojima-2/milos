@@ -12,6 +12,8 @@ from milos.service import Service
 
 from .fakes import FakeAuditLog, FakeDirectory, FakeJobs, FakeStore
 
+EMULATOR_HOST = os.environ.get("FIRESTORE_EMULATOR_HOST")  # captured before `clean_env` strips it
+
 GCP_ENV = (
     "GOOGLE_CLOUD_PROJECT",
     "FIRESTORE_EMULATOR_HOST",
