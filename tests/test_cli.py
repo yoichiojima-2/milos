@@ -13,6 +13,7 @@ from milos import cli
 from milos.api import create_app
 from milos.auth import IAP_HEADER
 from milos.client import Client
+from milos.models import StopReason
 
 from .test_api import FakeIap
 
@@ -37,17 +38,24 @@ def as_user(app, monkeypatch):
     return use
 
 
+async def park(service, **kwargs):
+    """A session whose first tool call waits for approval."""
+    session = await service.create_session("analyst", "hi", operator="alice@example.com", client_request_id="r1", **kwargs)
+    await service.permit(
+        session.session_id, lease_token=session.lease.token, tool_use_id="toolu_1", tool_name="Bash", args={"command": "ls"}
+    )
+    return await service.get_session(session.session_id)
+
+
 def parked_session(service, agent, **kwargs):
-    """A session whose first tool call waits for approval. `cli.main` runs its own loop, so tests stay synchronous."""
+    """`park` for synchronous tests: `cli.main` runs its own event loop."""
+    return asyncio.run(park(service, **kwargs))
 
-    async def make():
-        session = await service.create_session("analyst", "hi", operator="alice@example.com", client_request_id="r1", **kwargs)
-        await service.permit(
-            session.session_id, lease_token=session.lease.token, tool_use_id="toolu_1", tool_name="Bash", args={"command": "ls"}
-        )
-        return await service.get_session(session.session_id)
 
-    return asyncio.run(make())
+def follow_as_alice(app, session_id: str) -> asyncio.Task:
+    client = Client("http://public", transport=ASGITransport(app=app))
+    client._http.headers[IAP_HEADER] = "alice@example.com"
+    return asyncio.create_task(cli._follow(client, session_id, interval=0.01))
 
 
 def test_agents_list_shows_tools_and_approval(as_user, agent, capsys):
@@ -75,13 +83,57 @@ def test_pending_shows_the_call_and_the_commands(as_user, service, agent, capsys
     assert capsys.readouterr().out == ""
 
 
-def test_follow_ends_with_the_next_step(as_user, service, agent, capsys):
-    session = parked_session(service, agent)
-    assert session.stop_reason == "requires_action"
+async def test_follow_waits_through_the_approval(app, service, agent, capsys):
+    session = await park(service, approvers=["lead@example.com"])
+    task = follow_as_alice(app, session.session_id)
+    await asyncio.sleep(0.05)
+    assert not task.done()  # parked for approval, still following
+    out = capsys.readouterr().out
+    assert 'Bash {"command": "ls"} → require_confirmation' in out
+    assert "waiting for lead@example.com to decide: Bash" in out and f"milos allow {session.session_id} toolu_1" in out
 
-    as_user("alice@example.com")
-    assert cli.main(["events", session.session_id, "--follow"]) == 0
-    assert f"waiting for approval: milos allow {session.session_id} toolu_1" in capsys.readouterr().out
+    await service.confirm(session.session_id, "toolu_1", "allow", actor="lead@example.com")
+    resumed = await service.get_session(session.session_id)
+    assert resumed.status == "running"
+    await service.ack(resumed.session_id, lease_token=resumed.lease.token, seq=1)  # the runner consumed "hi"
+    await service.finish(resumed.session_id, lease_token=resumed.lease.token, stop_reason=StopReason.END_TURN)
+    await asyncio.wait_for(task, 2)
+    out = capsys.readouterr().out
+    assert "user.tool_confirmation" in out and out.rstrip().endswith("milos send " + session.session_id + ' "..."')
+
+
+async def test_follow_says_how_to_resume_when_interrupted(app, service, agent, capsys):
+    session = await park(service)
+    task = follow_as_alice(app, session.session_id)
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert f"detached; the session continues: milos events {session.session_id} --follow" in capsys.readouterr().out
+
+
+def test_allow_resolves_the_only_waiting_call(as_user, service, agent, capsys):
+    parked_session(service, agent, approvers=["lead@example.com"])
+    as_user("lead@example.com")
+    assert cli.main(["deny"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith('deny: Bash {"command": "ls"}') and "deny by lead@example.com" in out
+    assert cli.main(["allow"]) == 1
+    assert "nothing is waiting" in capsys.readouterr().err
+
+
+def test_allow_refuses_to_guess_between_calls(as_user, service, agent, capsys):
+    session = parked_session(service, agent, approvers=["lead@example.com"])
+    asyncio.run(
+        service.permit(
+            session.session_id, lease_token=session.lease.token, tool_use_id="toolu_2", tool_name="Bash", args={"command": "rm"}
+        )
+    )
+    as_user("lead@example.com")
+    assert cli.main(["allow", session.session_id]) == 1
+    captured = capsys.readouterr()
+    assert "2 calls are waiting" in captured.err and "toolu_2" in captured.out
+    assert cli.main(["allow", session.session_id, "toolu_2"]) == 0
 
 
 def test_dotenv_is_read_but_never_overrides(tmp_path, monkeypatch):

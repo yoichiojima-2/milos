@@ -13,6 +13,7 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -22,7 +23,7 @@ from .auth import SessionTokens
 from .client import ApiError, Client
 from .errors import Invalid, MilosError
 from .jobs import NoJobs
-from .models import Event, EventType, Session, StopReason
+from .models import Event, EventType, Session, SessionStatus, StopReason
 from .service import Service
 from .store import FirestoreStore
 
@@ -53,13 +54,18 @@ def _service() -> Service:
     return Service(FirestoreStore(project=project), StderrAuditLog(), NoJobs(), SessionTokens("cli"))
 
 
+def _args(payload: dict[str, Any], limit: int = 100) -> str:
+    text = json.dumps(payload.get("args", {}), default=str)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def _print_event(event: Event) -> None:
     payload = event.payload
     match event.type:
         case EventType.USER_MESSAGE | EventType.AGENT_MESSAGE:
             body = payload.get("text", "")
         case EventType.AGENT_TOOL_USE:
-            body = f"{payload.get('tool_name')} → {payload.get('decision')} ({payload.get('reason')})"
+            body = f"{payload.get('tool_name')} {_args(payload)} → {payload.get('decision')} ({payload.get('reason')})"
         case EventType.TOOL_RESULT:
             body = f"{payload.get('outcome')}: {payload.get('summary', '')[:120]}"
         case EventType.SESSION_STATUS:
@@ -68,7 +74,8 @@ def _print_event(event: Event) -> None:
             body = f"{payload.get('decision')} {payload.get('tool_name')}"
         case _:
             body = json.dumps(payload, default=str)[:200]
-    print(f"{event.seq:>4}  {event.type.value:<24} {event.actor:<20} {body}")
+    when = event.created_at.astimezone().strftime("%H:%M:%S")
+    print(f"{event.seq:>4}  {when}  {event.type.value:<24} {event.actor:<20} {body}")
 
 
 def _print_session(s: Session) -> None:
@@ -77,18 +84,40 @@ def _print_session(s: Session) -> None:
     print(f"{s.session_id}  {when}  {s.agent_id:<16} {s.status.value:<12} {s.stop_reason or ''}{pending}")
 
 
+async def _pending_calls(client: Client, session: Session) -> list[tuple[Session, Event]]:
+    """The tool requests a session is waiting on, with their arguments."""
+    requests = {e.tool_use_id: e for e in await client.events(session.session_id) if e.type == EventType.AGENT_TOOL_USE}
+    return [(session, requests[t]) for t in session.pending_tool_use_ids if t in requests]
+
+
+async def _print_waiting(client: Client, session_id: str) -> None:
+    session = await client.session(session_id)
+    who = ", ".join(session.approvers) or "someone in the agent's allowed groups"
+    for _, request in await _pending_calls(client, session):
+        print(f"      waiting for {who} to decide: {request.payload.get('tool_name')} {_args(request.payload)}")
+        print(f"      milos allow {session_id} {request.tool_use_id}  |  milos deny {session_id} {request.tool_use_id}")
+
+
 def _print_next_step(session: Session) -> None:
-    """After a session stops, say what unblocks it."""
-    if session.stop_reason == StopReason.REQUIRES_ACTION:
-        for tool_use_id in session.pending_tool_use_ids:
-            print(f"waiting for approval: milos allow {session.session_id} {tool_use_id}  (or deny)")
-    elif session.stop_reason == StopReason.END_TURN:
+    """After a session stops, say what moves it on."""
+    if session.stop_reason == StopReason.END_TURN:
         print(f'idle: milos send {session.session_id} "..."')
+    elif session.status == SessionStatus.TERMINATED:
+        print("terminated")
+    elif session.stop_reason:
+        print(f"stopped: {session.stop_reason.value}")
 
 
-async def _follow(client: Client, session_id: str, *, after: int = 0) -> None:
-    async for event in client.follow(session_id, after=after):
-        _print_event(event)
+async def _follow(client: Client, session_id: str, *, after: int = 0, interval: float = 2.0) -> None:
+    """Print events as they happen, through approval waits, until the session is idle or terminated."""
+    try:
+        async for event in client.follow(session_id, after=after, interval=interval):
+            _print_event(event)
+            if event.type == EventType.SESSION_STATUS and event.payload.get("stop_reason") == StopReason.REQUIRES_ACTION:
+                await _print_waiting(client, session_id)
+    except asyncio.CancelledError:
+        print(f"\ndetached; the session continues: milos events {session_id} --follow")
+        raise
     _print_next_step(await client.session(session_id))
 
 
@@ -130,19 +159,22 @@ async def cmd_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _inbox(client: Client, session_id: str | None = None) -> list[tuple[Session, Event]]:
+    """Every tool call waiting on the caller, or those of one session."""
+    sessions = [await client.session(session_id)] if session_id else await client.sessions(role="approver")
+    return [call for s in sessions if s.pending_tool_use_ids for call in await _pending_calls(client, s)]
+
+
+def _print_call(session: Session, request: Event) -> None:
+    print(f"{session.session_id}  {session.agent_id}  by {session.operator}")
+    print(f"  {request.payload.get('tool_name')} {_args(request.payload, limit=400)}")
+    print(f"  milos allow {session.session_id} {request.tool_use_id}  |  milos deny {session.session_id} {request.tool_use_id}")
+
+
 async def cmd_pending(_: argparse.Namespace) -> int:
-    """Tool calls waiting on the caller, with the arguments a decision is about."""
     async with _client() as client:
-        for s in await client.sessions(role="approver"):
-            if not s.pending_tool_use_ids:
-                continue
-            requests = {e.tool_use_id: e for e in await client.events(s.session_id) if e.type == EventType.AGENT_TOOL_USE}
-            for tool_use_id in s.pending_tool_use_ids:
-                payload = requests[tool_use_id].payload if tool_use_id in requests else {}
-                args = json.dumps(payload.get("args", {}), default=str)
-                print(f"{s.session_id}  {s.agent_id}  by {s.operator}")
-                print(f"  {payload.get('tool_name', '?')} {args}")
-                print(f"  milos allow {s.session_id} {tool_use_id}  |  milos deny {s.session_id} {tool_use_id}")
+        for session, request in await _inbox(client):
+            _print_call(session, request)
     return 0
 
 
@@ -159,8 +191,23 @@ async def cmd_agents_list(_: argparse.Namespace) -> int:
 
 
 async def cmd_confirm(args: argparse.Namespace) -> int:
+    """`milos allow [session] [tool_use_id]`: what is left out is resolved from the inbox when unambiguous."""
     async with _client() as client:
-        approval = await client.confirm(args.session, args.tool_use_id, args.decision)
+        session_id, tool_use_id = args.session, args.tool_use_id
+        if not tool_use_id:
+            calls = await _inbox(client, session_id)
+            if not calls:
+                print("nothing is waiting for your decision", file=sys.stderr)
+                return 1
+            if len(calls) > 1:
+                print(f"{len(calls)} calls are waiting; name the session and tool use id:", file=sys.stderr)
+                for session, request in calls:
+                    _print_call(session, request)
+                return 1
+            ((session, request),) = calls
+            session_id, tool_use_id = session.session_id, request.tool_use_id or ""
+            print(f"{args.decision}: {request.payload.get('tool_name')} {_args(request.payload)} in {session_id}")
+        approval = await client.confirm(session_id, tool_use_id, args.decision)
     print(f"{approval.decision} by {approval.decided_by}")
     return 0
 
@@ -257,9 +304,9 @@ def parser() -> argparse.ArgumentParser:
     sub.add_parser("pending", help="tool calls waiting for your approval").set_defaults(fn=cmd_pending)
 
     for decision in ("allow", "deny"):
-        c = sub.add_parser(decision, help=f"{decision} a pending tool call")
-        c.add_argument("session")
-        c.add_argument("tool_use_id")
+        c = sub.add_parser(decision, help=f"{decision} a pending tool call; ids may be left out when only one call is waiting")
+        c.add_argument("session", nargs="?")
+        c.add_argument("tool_use_id", nargs="?")
         c.set_defaults(fn=cmd_confirm, decision=decision)
 
     interrupt = sub.add_parser("interrupt", help="stop the current turn")
@@ -304,6 +351,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except httpx.HTTPError as error:
         print(f"error: cannot reach the API ({error}); check MILOS_API_URL", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":

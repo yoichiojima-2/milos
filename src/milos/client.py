@@ -15,7 +15,7 @@ from typing import Any, Literal, Self
 import httpx
 from pydantic import BaseModel
 
-from .models import Approval, Event, Published, Session, SessionStatus, ToolDecision
+from .models import Approval, Event, Published, Session, SessionStatus, StopReason, ToolDecision
 
 type SessionRole = Literal["operator", "approver"]
 
@@ -122,7 +122,11 @@ class Client:
         return await self._one(Session, "POST", f"/sessions/{session_id}/terminate")
 
     async def follow(self, session_id: str, *, after: int = 0, interval: float = 2.0) -> AsyncIterator[Event]:
-        """Yield events as they appear; stops when the session is idle or terminated."""
+        """Yield events as they appear until the session is terminated or idle for something other than approval.
+
+        A session waiting for a person to allow or deny a tool call is not finished: the
+        decision restarts it, so the iterator keeps polling and resumes with the events that follow.
+        """
         while True:
             events = await self.events(session_id, after=after)
             for event in events:
@@ -130,7 +134,9 @@ class Client:
                 yield event
             if not events:
                 session = await self.session(session_id)
-                if session.status in (SessionStatus.IDLE, SessionStatus.TERMINATED):
+                if session.status == SessionStatus.TERMINATED:
+                    return
+                if session.status == SessionStatus.IDLE and session.stop_reason != StopReason.REQUIRES_ACTION:
                     return
                 await asyncio.sleep(interval)
 

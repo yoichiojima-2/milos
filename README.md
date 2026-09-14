@@ -50,16 +50,16 @@ system_prompt: |
 ```sh
 milos agents list                       # what you may run, and which tools pause for approval
 milos run analyst "Summarise last week's numbers." --approver lead@example.com
+milos pending                           # as the approver: waiting calls with their arguments
+milos allow                             # decide; ids are needed only when several calls wait
 milos sessions                          # status, stop reason, pending tool calls
 milos events sess_…  --follow           # the journal: messages, tool requests, decisions
-milos pending                           # as the approver: waiting calls with their arguments
-milos allow sess_… toolu_…              # a person other than the operator decides
 milos send sess_… "Also include June."  # a follow-up; an idle session restarts
 milos interrupt sess_…                  # stops the current turn
 milos terminate sess_…                  # ends the session; every later tool request is refused
 ```
 
-`run` follows the session (`--detach` returns the id instead). When a followed session stops, the CLI prints the command that moves it on: the `allow`/`deny` pair for a waiting tool call, or `send` for an idle turn. The CLI reads `MILOS_API_URL` and the token settings from `.env` in the working directory; `.env.example` lists them.
+`run` is the whole interaction: it prints each message, tool request and decision as it happens, and when a call needs a person it says who and waits, then carries on once they decide. Ctrl-C detaches; the session continues and `events --follow` picks it up again (`--detach` returns the id at once). When the session stops the CLI prints what moves it on. The CLI reads `MILOS_API_URL` and the token settings from `.env` in the working directory; `.env.example` lists them.
 
 A session starts running and stops in one of five ways: `end_turn` (idle, restarts on the next message), `requires_action` (a tool call waits for a person), `budget_reached` (the definition's turn or cost limit), `stopped` (terminated, or the agent was disabled), `needs_attention` (a run died twice; inspection gave up). Disabling an agent stops every session at its next tool request or poll.
 

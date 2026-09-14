@@ -44,7 +44,7 @@ The design marks these as things to confirm on real hardware. Do them in order w
 
 ## Runbooks
 
-**Approve or deny.** `milos pending` lists every tool call waiting on you, with its arguments and the `allow`/`deny` commands filled in; `milos sessions --approving` lists every session that names you as an approver. The operator sees the same ids as `pending=` in `milos sessions`. The operator cannot decide on their own session; the decision needs someone in the agent's `allowed_groups` (and in the session's `approvers` if set). Expired requests are denied by inspection after `approval_ttl_sec`.
+**Approve or deny.** `milos pending` lists every tool call waiting on you, with its arguments. `milos allow` or `milos deny` decides it; when more than one call waits, the command lists them and asks for the session and tool use id. `milos sessions --approving` lists every session that names you as an approver, and the operator's `milos run` resumes by itself once you decide. The operator cannot decide on their own session; the decision needs someone in the agent's `allowed_groups` (and in the session's `approvers` if set). Expired requests are denied by inspection after `approval_ttl_sec`.
 
 **Stop one session.** `milos interrupt` ends the current turn; `milos terminate` ends the session for good.
 
