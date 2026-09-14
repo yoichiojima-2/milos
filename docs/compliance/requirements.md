@@ -46,12 +46,3 @@ The team's security requirements derive ISO/IEC 27001 and 42001 controls into sy
 | REQ-O-13 | Allowed services fixed | `modules/foundation` API lists; `restrictServiceUsage` at the folder (organization side) | Diff enabled APIs against the list (procedure) |
 | REQ-O-14 | Admin operations only on audited paths | Cloud Audit Logs to the locked bucket; no standing write roles | Admin Activity log review (procedure) |
 
-## Existing-project development variant
-
-`infra/envs/existing-project` supports a personal project without an organization.
-Individual users are authenticated by IAP and must also appear in the immutable
-agent definition's `allowed_users`; the existing group check remains available.
-The API uses the same membership check for session creation and approvers, and
-still rejects self-approval. See `tests/test_api.py` for both denied and permitted
-requests. This variant does not implement the cross-project or folder controls
-listed above; see `soa-notes.md`.
