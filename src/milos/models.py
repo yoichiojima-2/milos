@@ -15,13 +15,14 @@ Collections:
       approvals/{tool_use_id}    create-only
 """
 
+import fnmatch
 import hashlib
 import json
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def utcnow() -> datetime:
@@ -74,8 +75,26 @@ class Agent(Document):
     latest_version: int
 
 
+# Tools the SDK ships that must never be granted directly: the web goes
+# through a connector, where the URL is logged and the host is checked.
+FORBIDDEN_TOOLS = ("WebFetch", "WebSearch")
+# The SDK's own tools an agent may be granted; anything else must be an MCP
+# tool exposed by a connector (`mcp__<connector>__<tool>`).
+SDK_TOOLS = ("Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "NotebookEdit", "Task")
+
+
+def _email(value: str) -> str:
+    if "@" not in value:
+        raise ValueError("must be an email address")
+    return value
+
+
 class AgentVersion(Document):
-    """agents/{agent_id}/versions/{version}. Published from Git by CI after validation."""
+    """agents/{agent_id}/versions/{version}. Published from Git by CI after validation.
+
+    The rules a definition must meet are validators here, so one round of
+    validation reports every problem in the file.
+    """
 
     agent_id: str
     version: int
@@ -87,15 +106,72 @@ class AgentVersion(Document):
     data_classes: list[str]
     allowed_tools: list[str]  # platform capabilities; never passed to the SDK as-is
     approval_required: list[str]  # subset of allowed_tools
-    approval_ttl_sec: int
-    max_turns: int  # mandatory; a definition without it is not published
-    max_budget_usd: float
-    max_concurrent_sessions: int
+    approval_ttl_sec: int = Field(gt=0)
+    max_turns: int = Field(gt=0)  # mandatory; a definition without it is not published
+    max_budget_usd: float = Field(gt=0)
+    max_concurrent_sessions: int = Field(gt=0)
     model: str  # Vertex AI model id
     runner_sa: str  # the agent's dedicated runner service account
     system_prompt: str
     connectors: list[str] = Field(default_factory=list)  # MCP connector names mounted
     published_at: datetime
+
+    @field_validator("purpose")
+    @classmethod
+    def _purpose_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("owner")
+    @classmethod
+    def _owner_email(cls, value: str) -> str:
+        return _email(value)
+
+    @field_validator("allowed_users")
+    @classmethod
+    def _users_are_lower_case_emails(cls, users: list[str]) -> list[str]:
+        if any("@" not in u or u != u.strip().lower() for u in users):
+            raise ValueError("must contain lower-case email addresses")
+        return users
+
+    @field_validator("runner_sa")
+    @classmethod
+    def _runner_sa_is_service_account(cls, value: str) -> str:
+        if not value.endswith(".iam.gserviceaccount.com"):
+            raise ValueError("must be a service account email")
+        return value
+
+    @field_validator("allowed_tools")
+    @classmethod
+    def _tools_are_known(cls, tools: list[str]) -> list[str]:
+        problems = []
+        for tool in tools:
+            if tool in FORBIDDEN_TOOLS:
+                problems.append(f"{tool} may not be granted directly; use a connector")
+            elif not (tool in SDK_TOOLS or tool.startswith("mcp__")):
+                problems.append(f"unknown tool {tool}")
+        if problems:
+            raise ValueError("; ".join(problems))
+        return tools
+
+    @model_validator(mode="after")
+    def _fields_agree(self) -> "AgentVersion":
+        problems = []
+        if not self.allowed_groups and not self.allowed_users:
+            problems.append("allowed_groups must name at least one group or allowed_users must name a user")
+        for tool in self.approval_required:
+            if not any(fnmatch.fnmatchcase(tool, p) or tool == p for p in self.allowed_tools):
+                problems.append(f"approval_required entry {tool} is not in allowed_tools")
+        for tool in self.allowed_tools:
+            if tool.startswith("mcp__"):
+                name, separator, _ = tool.removeprefix("mcp__").partition("__")
+                connector = name if separator else ""
+                if connector not in self.connectors:
+                    problems.append(f"{tool} needs connector {connector!r} in connectors")
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
 
 
 class Published(BaseModel):

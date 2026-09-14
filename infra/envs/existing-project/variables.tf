@@ -11,7 +11,9 @@ variable "vertex_region" {
   default = "us-east5"
 }
 variable "image" {
-  type = string
+  description = "The milos image; the default is a public placeholder for the first apply."
+  type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
 variable "agent_ids" {
   type    = list(string)

@@ -3,11 +3,11 @@
 A definition is the unit of control. It names the purpose, the owner, who may
 start it, which data classes it touches, which tools it may use and which of
 those need a human, its limits, its model, and its own runner service
-account. Nothing runs without one, and the registry (`registry()`) is
-generated from what is published rather than maintained by hand.
+account. The rules are the validators on `models.AgentVersion`. Nothing runs
+without a definition, and the registry (`registry()`) is generated from what
+is published rather than maintained by hand.
 """
 
-import fnmatch
 import hashlib
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -18,15 +18,6 @@ from pydantic import ValidationError
 
 from .errors import Invalid
 from .models import Agent, AgentVersion, utcnow
-
-# Tools the SDK ships that must never be granted directly: the web goes
-# through a connector, where the URL is logged and the host is checked.
-FORBIDDEN_TOOLS = ("WebFetch", "WebSearch")
-# The SDK's own tools an agent may be granted; anything else must be an MCP
-# tool exposed by a connector (`mcp__<connector>__<tool>`).
-SDK_TOOLS = ("Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "NotebookEdit", "Task")
-# Limits a definition must set to a positive value.
-LIMITS = ("max_turns", "max_budget_usd", "max_concurrent_sessions", "approval_ttl_sec")
 
 
 def load(path: str | Path) -> AgentVersion:
@@ -41,43 +32,16 @@ def load(path: str | Path) -> AgentVersion:
 def build(data: dict[str, Any], *, definition_sha256: str) -> AgentVersion:
     fields = {**data, "version": 0, "definition_sha256": definition_sha256, "published_at": utcnow()}
     try:
-        version = AgentVersion.model_validate(fields)
+        return AgentVersion.model_validate(fields)
     except ValidationError as error:
-        detail = "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in error.errors())
-        raise Invalid(f"invalid definition: {detail}") from error
-    if problems := check(version):
-        raise Invalid("invalid definition: " + "; ".join(problems))
-    return version
+        raise Invalid("invalid definition: " + "; ".join(_problem(e) for e in error.errors())) from error
 
 
-def check(version: AgentVersion) -> list[str]:
-    """Rules pydantic cannot express. Empty list means valid."""
-    problems = [f"{limit} must be positive" for limit in LIMITS if getattr(version, limit) <= 0]
-    if not version.allowed_groups and not version.allowed_users:
-        problems.append("allowed_groups must name at least one group or allowed_users must name a user")
-    if any("@" not in email or email != email.strip().lower() for email in version.allowed_users):
-        problems.append("allowed_users must contain lower-case email addresses")
-    if "@" not in version.owner:
-        problems.append("owner must be an email address")
-    if not version.purpose.strip():
-        problems.append("purpose must not be empty")
-    if not version.runner_sa.endswith(".iam.gserviceaccount.com"):
-        problems.append("runner_sa must be a service account email")
-    for tool in version.allowed_tools:
-        if tool in FORBIDDEN_TOOLS:
-            problems.append(f"{tool} may not be granted directly; use a connector")
-        elif not (tool in SDK_TOOLS or tool.startswith("mcp__")):
-            problems.append(f"unknown tool {tool}")
-    for tool in version.approval_required:
-        if not any(fnmatch.fnmatchcase(tool, p) or tool == p for p in version.allowed_tools):
-            problems.append(f"approval_required entry {tool} is not in allowed_tools")
-    for tool in version.allowed_tools:
-        if tool.startswith("mcp__"):
-            name, separator, _ = tool.removeprefix("mcp__").partition("__")
-            connector = name if separator else ""
-            if connector not in version.connectors:
-                problems.append(f"{tool} needs connector {connector!r} in connectors")
-    return problems
+def _problem(error: Any) -> str:
+    """`field: message`, without pydantic's "Value error, " prefix on our own messages."""
+    message = str(error["msg"]).removeprefix("Value error, ")
+    location = ".".join(str(part) for part in error["loc"])
+    return f"{location}: {message}" if location else message
 
 
 # --- the AI usage register --------------------------------------------------------

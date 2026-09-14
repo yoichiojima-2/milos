@@ -12,6 +12,7 @@ import json
 import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 import httpx
 
@@ -26,11 +27,23 @@ from .service import Service
 from .store import FirestoreStore
 
 
+def _load_dotenv(path: str = ".env") -> None:
+    """`KEY=value` lines from `.env` in the working directory; the environment wins."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        key, separator, value = line.strip().partition("=")
+        if separator and key and not key.startswith("#"):
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
 def _client() -> Client:
     try:
         return Client.from_env()
     except KeyError as error:
-        raise SystemExit(f"{error.args[0]} is not set") from None
+        raise SystemExit(f"{error.args[0]} is not set; copy .env.example to .env and fill it in") from None
 
 
 def _service() -> Service:
@@ -86,7 +99,9 @@ async def cmd_run(args: argparse.Namespace) -> int:
     async with _client() as client:
         session = await client.create_session(args.agent, args.message, approvers=args.approver)
         print(session.session_id)
-        if args.follow:
+        if args.detach:
+            print(f"follow with: milos events {session.session_id} --follow")
+        else:
             await _follow(client, session.session_id)
     return 0
 
@@ -217,11 +232,11 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="milos", description="Secure agent platform on Google Cloud")
     sub = p.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="start a session")
+    run = sub.add_parser("run", help="start a session and follow it")
     run.add_argument("agent")
     run.add_argument("message")
-    run.add_argument("--approver", action="append", default=[], help="who may approve tool calls")
-    run.add_argument("--follow", "-f", action="store_true")
+    run.add_argument("--approver", action="append", default=[], help="who may approve tool calls (repeatable)")
+    run.add_argument("--detach", "-d", action="store_true", help="print the session id and return")
     run.set_defaults(fn=cmd_run)
 
     send = sub.add_parser("send", help="send a follow-up message")
@@ -278,6 +293,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    _load_dotenv()
     args = parser().parse_args(argv)
     try:
         result = args.fn(args)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import httpx
 import pytest
@@ -83,9 +84,17 @@ def test_follow_ends_with_the_next_step(as_user, service, agent, capsys):
     assert f"waiting for approval: milos allow {session.session_id} toolu_1" in capsys.readouterr().out
 
 
+def test_dotenv_is_read_but_never_overrides(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("# operator\nMILOS_API_URL=http://from-file\nMILOS_ID_TOKEN='t'\n")
+    monkeypatch.setenv("MILOS_ID_TOKEN", "from-env")
+    cli._load_dotenv()
+    assert os.environ["MILOS_API_URL"] == "http://from-file" and os.environ["MILOS_ID_TOKEN"] == "from-env"
+
+
 def test_api_errors_are_one_line(as_user, agent, capsys):
     as_user("x@other.org")
-    assert cli.main(["run", "analyst", "hi"]) == 1
+    assert cli.main(["run", "analyst", "hi", "--detach"]) == 1
     err = capsys.readouterr().err
     assert err.startswith("error: 403") and "Traceback" not in err
 

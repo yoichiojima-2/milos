@@ -42,8 +42,7 @@ from claude_agent_sdk.types import HookEvent, McpHttpServerConfig, McpServerConf
 
 from .connector import MCP_PATH
 from .control import Control, GoogleIdentity, Identity, auth_headers
-from .definitions import FORBIDDEN_TOOLS
-from .models import AgentVersion, EventType, StopReason, sha256_text
+from .models import FORBIDDEN_TOOLS, AgentVersion, EventType, StopReason, sha256_text
 from .service import RunnerEvent
 from .settings import RunnerSettings
 from .snapshots import Blobs, GcsBlobs, restore, save

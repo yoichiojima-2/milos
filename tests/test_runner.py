@@ -155,7 +155,7 @@ async def test_plain_turn_reports_messages_and_finishes(service, tokens, session
     assert options.setting_sources == [] and "WebFetch" in options.disallowed_tools
     assert options.max_turns == 20 and options.max_budget_usd == 5.0
     assert options.env["CLAUDE_CODE_USE_VERTEX"] == "1"
-    assert options.mcp_servers == {}  # analyst has no connectors in the test definition
+    assert list(options.mcp_servers) == ["egress"]  # the definition's connectors, from connector_urls
 
 
 async def test_denied_tool_never_runs(service, tokens, session, sdk, blobs, tmp_path, monkeypatch):

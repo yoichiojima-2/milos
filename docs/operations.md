@@ -11,7 +11,7 @@ terraform init -backend-config="bucket=<state bucket>"
 terraform apply
 ```
 
-The first apply creates the projects and the registry before any image exists, so the Cloud Run resources fail until one is pushed. Build the image, then apply again with its tag:
+The first apply creates the projects and the registry and runs a public placeholder image. Build the real image into the new registry, then apply again with its tag:
 
 ```sh
 REPO=$(terraform output -raw image_repository)

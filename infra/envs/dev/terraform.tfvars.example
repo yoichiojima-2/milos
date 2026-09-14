@@ -3,8 +3,8 @@ billing_account = "0158ED-XXXXXX-XXXXXX"
 region          = "asia-northeast1"
 vertex_region   = "us-east5"
 
-# Built and pushed by CI; the first apply needs a placeholder that exists.
-image = "asia-northeast1-docker.pkg.dev/milos-runtime-dev/milos/milos:latest"
+# Built and pushed after the first apply (docs/operations.md); leave unset until then.
+# image = "asia-northeast1-docker.pkg.dev/milos-runtime-dev/milos/milos:<sha>"
 
 agent_ids   = ["analyst"]
 users_group = "agent-users@example.com"

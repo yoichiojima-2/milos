@@ -49,7 +49,7 @@ system_prompt: |
 
 ```sh
 milos agents list                       # what you may run, and which tools pause for approval
-milos run analyst "Summarise last week's numbers." --approver lead@example.com --follow
+milos run analyst "Summarise last week's numbers." --approver lead@example.com
 milos sessions                          # status, stop reason, pending tool calls
 milos events sess_…  --follow           # the journal: messages, tool requests, decisions
 milos pending                           # as the approver: waiting calls with their arguments
@@ -59,7 +59,7 @@ milos interrupt sess_…                  # stops the current turn
 milos terminate sess_…                  # ends the session; every later tool request is refused
 ```
 
-When a followed session stops, the CLI prints the command that moves it on: the `allow`/`deny` pair for a waiting tool call, or `send` for an idle turn.
+`run` follows the session (`--detach` returns the id instead). When a followed session stops, the CLI prints the command that moves it on: the `allow`/`deny` pair for a waiting tool call, or `send` for an idle turn. The CLI reads `MILOS_API_URL` and the token settings from `.env` in the working directory; `.env.example` lists them.
 
 A session starts running and stops in one of five ways: `end_turn` (idle, restarts on the next message), `requires_action` (a tool call waits for a person), `budget_reached` (the definition's turn or cost limit), `stopped` (terminated, or the agent was disabled), `needs_attention` (a run died twice; inspection gave up). Disabling an agent stops every session at its next tool request or poll.
 
@@ -67,14 +67,14 @@ A session starts running and stops in one of five ways: `end_turn` (idle, restar
 
 ```
 src/milos/
-  models.py       Agent, AgentVersion, Session, Event, Lease, Permission, Approval
+  models.py       Agent, AgentVersion (with the definition rules), Session, Event, Lease, Permission, Approval
   store.py        transactional document store over Firestore (fake in tests/)
   service.py      the execution contract: every state change, every invariant
   api.py          FastAPI; public (IAP) and internal (session + lease tokens) routes
   auth.py         IAP assertions, session tokens, group membership
   audit.py        synchronous Cloud Logging entries
   jobs.py         Cloud Run Job launches
-  definitions.py  YAML definitions: validation, publishing, the registry
+  definitions.py  YAML definitions: loading, publishing, the registry
   runner.py       the job: SDK + PreToolUse hook, poll loop, snapshots
   control.py      the runner's client for the internal API
   snapshots.py    GCS snapshots of transcript and working directory

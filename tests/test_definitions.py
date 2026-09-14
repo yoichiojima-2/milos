@@ -28,8 +28,8 @@ def write(tmp_path: Path, **overrides) -> Path:
     "overrides, message",
     [
         ({"max_turns": None}, "max_turns"),
-        ({"max_turns": 0}, "positive"),
-        ({"max_budget_usd": 0}, "positive"),
+        ({"max_turns": 0}, "max_turns: Input should be greater than 0"),
+        ({"max_budget_usd": 0}, "greater than 0"),
         ({"allowed_groups": []}, "at least one group"),
         ({"allowed_tools": ["WebFetch"]}, "connector"),
         ({"approval_required": ["Edit"]}, "not in allowed_tools"),
@@ -49,6 +49,13 @@ async def test_registry_is_generated_from_published_versions(service):
     await service.publish(version)
     table = definitions.registry(await service.list_agents())
     assert "| analyst | 1 | yes |" in table and "owner@example.com" in table
+
+
+def test_all_problems_are_reported_at_once(tmp_path):
+    with pytest.raises(Invalid) as error:
+        definitions.load(write(tmp_path, max_turns=0, owner="nobody", allowed_tools=["Foo"], purpose=" "))
+    message = str(error.value)
+    assert all(word in message for word in ("max_turns", "owner", "unknown tool Foo", "purpose"))
 
 
 def test_definition_allows_explicit_google_users(tmp_path):

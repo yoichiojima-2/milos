@@ -17,7 +17,7 @@ The team's security requirements derive ISO/IEC 27001 and 42001 controls into sy
 | REQ-D-09 | Every tool call journaled and audited before it runs; enforced in code | `service.permit`: `agent.tool_use` event committed, `audit.write` synchronous, then `permissions/{id}`; runner `Gate.pre_tool_use` fails closed | `test_allowed_tool_is_journaled_audited_then_permitted`, `test_audit_failure_means_no_permission`, `test_unreachable_api_denies_fail_closed` |
 | REQ-D-10 | Audit logs in a dedicated project nobody can alter | `modules/logging`: locked bucket, folder sink with children, lien | `terraform validate`; delete attempt refused (procedure) |
 | REQ-D-11 | Detect and notify deviations | `modules/runtime` log metric + alert on denial bursts; owner in the definition | Alert test event (procedure) |
-| REQ-D-12 | No agent without a definition | `definitions.load/check`; `service.create_session` refuses missing or unpublished definitions | `test_invalid_definitions_are_rejected`, `test_create_session_rejects_missing_definition` |
+| REQ-D-12 | No agent without a definition | `definitions.load` and the `AgentVersion` validators; `service.create_session` refuses missing or unpublished definitions | `test_invalid_definitions_are_rejected`, `test_create_session_rejects_missing_definition` |
 | REQ-D-13 | Register and documents generated from definitions | `milos agents registry` | `test_registry_is_generated_from_published_versions` |
 | REQ-D-14 | Intended use in the definition; deviations blocked structurally | `AgentVersion.allowed_tools`, `service._decide` | `test_unlisted_tool_is_denied` |
 | REQ-D-15 | Dataset provenance per unit | `modules/data` dataset labels (`source`) | Label query (procedure) |

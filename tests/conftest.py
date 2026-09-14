@@ -94,6 +94,7 @@ def definition(**overrides) -> AgentVersion:
         model="claude-sonnet-5@20260601",
         runner_sa="runner-analyst@runtime.iam.gserviceaccount.com",
         system_prompt="You are a careful analyst.",
+        connectors=["egress"],
         published_at=datetime(2026, 9, 1, tzinfo=UTC),
     )
     base.update(overrides)

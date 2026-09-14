@@ -17,7 +17,7 @@ Secure agent platform on Google Cloud. One Python package (`src/milos/`): API, r
 - **Runner writes carry the lease token.** Any new internal route takes `X-Milos-Session` (session token, verified by `auth.SessionTokens`) and `X-Milos-Lease` (checked by `Service._check_lease`).
 - **Create-only collections** (`permissions`, `approvals`) are enforced by `Transaction.create`; do not add update methods for them.
 - **Models are strict** (`extra="forbid"`). New fields go on the model and, when Firestore needs an index, in `modules/runtime/main.tf`.
-- **Definitions are the control unit.** Anything an agent may do must be expressible in `agents/*.yaml` and checked in `definitions.check`. `allowed_tools` are platform capabilities; the SDK gets its default tools plus the hook, never the list.
+- **Definitions are the control unit.** Anything an agent may do must be expressible in `agents/*.yaml` and checked by the validators on `models.AgentVersion`. `allowed_tools` are platform capabilities; the SDK gets its default tools plus the hook, never the list.
 - **Fakes mirror the real adapters.** A new adapter (protocol in `src/milos/`) gets a fake in `tests/fakes.py` with the same signature.
 - **English everywhere** in this repository: code, comments, docs, commit messages.
 - Keep `docs/compliance/requirements.md` and `soa-notes.md` in step with control changes.
