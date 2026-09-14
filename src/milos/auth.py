@@ -48,19 +48,23 @@ class CloudIdentityDirectory:
         self._session = AuthorizedSession(credentials)  # type: ignore[no-untyped-call]
 
     async def is_member(self, email: str, group: str) -> bool:
+        """Raises when the directory cannot answer: a misconfigured API must not look like a policy decision."""
+
         def check() -> bool:
             lookup = self._session.get(
                 "https://cloudidentity.googleapis.com/v1/groups:lookup",
                 params={"groupKey.id": group},
             )
             if lookup.status_code != 200:
-                return False
+                raise RuntimeError(f"group {group} cannot be looked up ({lookup.status_code}): {lookup.text[:200]}")
             name = lookup.json()["name"]
             response = self._session.get(
                 f"https://cloudidentity.googleapis.com/v1/{name}/memberships:checkTransitiveMembership",
                 params={"query": f"member_key_id == '{email}'"},
             )
-            return response.status_code == 200 and bool(response.json().get("hasMembership"))
+            if response.status_code != 200:
+                raise RuntimeError(f"membership of {group} cannot be checked ({response.status_code}): {response.text[:200]}")
+            return bool(response.json().get("hasMembership"))
 
         return await asyncio.to_thread(check)
 
