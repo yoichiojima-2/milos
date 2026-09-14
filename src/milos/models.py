@@ -25,9 +25,13 @@ import json
 import secrets
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from .errors import Invalid
 
 
 def utcnow() -> datetime:
@@ -95,6 +99,13 @@ FORBIDDEN_TOOLS = ("WebFetch", "WebSearch")
 SDK_TOOLS = ("Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "NotebookEdit", "Task")
 
 
+def _problem(error: Any) -> str:
+    """`field: message`, without pydantic's "Value error, " prefix on our own messages."""
+    message = str(error["msg"]).removeprefix("Value error, ")
+    location = ".".join(str(part) for part in error["loc"])
+    return f"{location}: {message}" if location else message
+
+
 def _email(value: str) -> str:
     if "@" not in value:
         raise ValueError("must be an email address")
@@ -107,6 +118,19 @@ class AgentVersion(Document):
     The rules a definition must meet are validators here, so one round of
     validation reports every problem in the file.
     """
+
+    @classmethod
+    def from_yaml(cls, path: "str | Path") -> "AgentVersion":
+        """Parse and validate one definition file. Raises `Invalid` naming every problem found."""
+        raw = Path(path).read_bytes()
+        data = yaml.safe_load(raw) or {}
+        if not isinstance(data, dict):
+            raise Invalid(f"{path}: definition must be a mapping")
+        fields = {**data, "version": 0, "definition_sha256": hashlib.sha256(raw).hexdigest(), "published_at": utcnow()}
+        try:
+            return cls.model_validate(fields)
+        except ValidationError as error:
+            raise Invalid("invalid definition: " + "; ".join(_problem(e) for e in error.errors())) from error
 
     agent_id: str
     version: int
