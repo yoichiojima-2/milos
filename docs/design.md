@@ -6,13 +6,13 @@ The platform runs business agents that a team shares and that also run unattende
 
 - Three objects: **Agent**, **Session**, **Event**. A session stops for approval and resumes on a human decision. A scheduled run is a session created with its first message. The object model follows Claude Managed Agents so the two stay interchangeable in shape.
 - State changes are concentrated in the API. Users, administrators and runners never write to Firestore; publishing a definition is an API call by the admin group.
-- The first interface is the CLI. A web UI, diffs and Binary Authorization are later phases.
+- The CLI and the web console are two clients of the same API. The console is a static page the public service serves beside `/v1`: the IAP cookie that admitted the browser is the identity for every action, and it adds no route, permission or write path of its own. Diffs and Binary Authorization are later phases.
 
 ## 2. Architecture
 
 | Part | Implementation | Responsibility |
 | --- | --- | --- |
-| API | Cloud Run service. One image deployed as `public` (behind IAP, for users) and `internal` (internal ingress + IAM invoker, for runners, connectors and the scheduler) | Authorization; sessions and events; tool permissions; job launches |
+| API | Cloud Run service. One image deployed as `public` (behind IAP, for users; also serves the console) and `internal` (internal ingress + IAM invoker, for runners, connectors and the scheduler) | Authorization; sessions and events; tool permissions; job launches |
 | Runner | Cloud Run Job, one per agent, agent-specific service account | The Agent SDK and bash; polling the API; saving and restoring snapshots |
 | Connector | Cloud Run service. One MCP implementation deployed as `internal` (data tools, no NAT, no secrets) and `egress` (SaaS, web fetch; NAT and secrets). Web fetch runs under a separate identity with no secrets | Executing calls the API permitted |
 | Scheduler | Cloud Scheduler | Creating scheduled sessions; inspecting expired approvals and stalled runs |

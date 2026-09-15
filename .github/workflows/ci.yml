@@ -18,6 +18,23 @@ jobs:
       # A definition that cannot be validated is never published (REQ-D-12, REQ-D-19).
       - run: uv run milos agents validate agents/*.yaml deployments/*/*.yaml
 
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # The same build the Docker image runs; a page that fails to export fails here, not at deploy.
+      - run: npx next build
+
   terraform:
     runs-on: ubuntu-latest
     strategy:

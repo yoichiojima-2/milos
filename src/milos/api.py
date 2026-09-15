@@ -10,11 +10,13 @@ routes verify the caller's Google identity token against `scheduler_sa`.
 Authorization rules live in `access.py`; this module only applies them.
 """
 
+from collections.abc import Mapping
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
 
+from . import console
 from .access import Access, can_decide, can_operate, can_view
 from .audit import CloudAuditLog, StderrAuditLog
 from .auth import IAP_HEADER, CloudIdentityDirectory, Principal, SessionTokens, TokenVerifier
@@ -29,6 +31,7 @@ from .models import (
     Event,
     Finish,
     Inspection,
+    Me,
     NewApproval,
     NewInterrupt,
     NewMessage,
@@ -41,6 +44,7 @@ from .models import (
     RunnerContext,
     RunnerEvent,
     Session,
+    SessionView,
     SnapshotPointer,
 )
 from .service import Service
@@ -59,6 +63,7 @@ def create_app(
     verifier: TokenVerifier | None = None,
     dev_user: str | None = None,
     scheduler_sa: str | None = None,
+    static: Mapping[str, bytes] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="milos", docs_url=None, redoc_url=None)
 
@@ -73,6 +78,8 @@ def create_app(
     match role:
         case "public":
             app.include_router(_public(service, access=access, verifier=verifier, dev_user=dev_user))
+            if static:
+                console.mount(app, static)  # the console page and its assets; the routers above take precedence
         case "internal":
             app.include_router(_internal(service, tokens=tokens, verifier=verifier, scheduler_sa=scheduler_sa))
         case _:
@@ -119,6 +126,11 @@ def _public(service: Service, *, access: Access, verifier: TokenVerifier | None,
     Viewable = Annotated[Session, Depends(viewable)]
     Operated = Annotated[Session, Depends(operated)]
 
+    @router.get("/me")
+    async def me(user: User) -> Me:
+        """The caller as the API sees them; the console's only source of identity."""
+        return Me(email=user.email, admin=await access.admin(user.email), now=service.now())
+
     @router.get("/agents")
     async def list_agents(user: User) -> list[Published]:
         return [Published(agent=a, version=v) for a, v in await service.list_agents()]
@@ -138,12 +150,12 @@ def _public(service: Service, *, access: Access, verifier: TokenVerifier | None,
         return await service.set_enabled(agent_id, body.enabled)
 
     @router.post("/sessions", status_code=201)
-    async def create_session(body: NewSession, user: User) -> Session:
+    async def create_session(body: NewSession, user: User) -> SessionView:
         _, version = await service.get_agent(body.agent_id)
         await require_member(user.email, version.allowed_groups, f"{user.email} may not start {body.agent_id}")
         for approver in body.approvers:
             await require_member(approver, version.allowed_groups, f"approver {approver} is not allowed to use {body.agent_id}")
-        return await service.create_session(
+        session = await service.create_session(
             body.agent_id,
             body.message,
             operator=user.email,
@@ -151,17 +163,20 @@ def _public(service: Service, *, access: Access, verifier: TokenVerifier | None,
             viewers=body.viewers,
             approvers=body.approvers,
         )
+        return SessionView.of(session)
 
     @router.get("/sessions")
-    async def list_sessions(user: User, role: Literal["operator", "approver"] = "operator") -> list[Session]:
+    async def list_sessions(user: User, role: Literal["operator", "approver"] = "operator") -> list[SessionView]:
         """`role=operator`: sessions the caller started; `role=approver`: sessions naming the caller as approver."""
         if role == "approver":
-            return await service.list_sessions(approver=user.email)
-        return await service.list_sessions(operator=user.email)
+            sessions = await service.list_sessions(approver=user.email)
+        else:
+            sessions = await service.list_sessions(operator=user.email)
+        return [SessionView.of(s) for s in sessions]
 
     @router.get("/sessions/{session_id}")
-    async def get_session(session: Viewable) -> Session:
-        return session
+    async def get_session(session: Viewable) -> SessionView:
+        return SessionView.of(session)
 
     @router.get("/sessions/{session_id}/events")
     async def events(session: Viewable, after: Annotated[int, Query(ge=0)] = 0) -> list[Event]:
@@ -189,8 +204,8 @@ def _public(service: Service, *, access: Access, verifier: TokenVerifier | None,
         return await service.decide(session_id, body.tool_use_id, verdict=body.verdict, by=user.email)
 
     @router.post("/sessions/{session_id}/terminate")
-    async def terminate(session: Operated, user: User) -> Session:
-        return await service.terminate(session.session_id, actor=user.email)
+    async def terminate(session: Operated, user: User) -> SessionView:
+        return SessionView.of(await service.terminate(session.session_id, actor=user.email))
 
     return router
 
@@ -314,4 +329,5 @@ def build_from_env() -> FastAPI:
         verifier=verifier,
         dev_user=settings.dev_user,
         scheduler_sa=settings.scheduler_sa,
+        static=console.load_static() if settings.api_role == "public" else None,
     )

@@ -19,7 +19,7 @@ import httpx
 
 from .client import ApiError, Client
 from .errors import Invalid, MilosError
-from .models import AgentVersion, Event, EventType, Published, Session, SessionStatus, StopReason, Verdict
+from .models import AgentVersion, Event, EventType, Published, SessionStatus, SessionView, StopReason, Verdict
 
 
 def _load_dotenv(path: str = ".env") -> None:
@@ -68,19 +68,19 @@ def _print_event(event: Event) -> None:
     print(f"{event.seq:>4}  {when}  {event.type.value:<24} {event.actor:<20} {body}")
 
 
-def _print_session(s: Session) -> None:
+def _print_session(s: SessionView) -> None:
     pending = f" pending={','.join(c.tool_use_id for c in s.pending)}" if s.pending else ""
     when = s.created_at.strftime("%Y-%m-%d %H:%M")
     print(f"{s.session_id}  {when}  {s.agent_id:<16} {s.status.value:<12} {s.stop_reason or ''}{pending}")
 
 
-def _print_call(session: Session, request: Event) -> None:
+def _print_call(session: SessionView, request: Event) -> None:
     print(f"{session.session_id}  {session.agent_id}  by {session.operator}")
     print(f"  {request.payload.get('tool_name')} {_args(request.payload, limit=400)}")
     print(f"  milos allow {session.session_id} {request.tool_use_id}  |  milos deny {session.session_id} {request.tool_use_id}")
 
 
-def _print_next_step(session: Session) -> None:
+def _print_next_step(session: SessionView) -> None:
     """After a session stops, say what moves it on."""
     if session.stop_reason == StopReason.END_TURN:
         print(f'idle: milos send {session.session_id} "..."')
@@ -117,13 +117,13 @@ def registry(published: list[Published]) -> str:
 # --- following a session --------------------------------------------------------
 
 
-async def _pending_calls(client: Client, session: Session) -> list[tuple[Session, Event]]:
+async def _pending_calls(client: Client, session: SessionView) -> list[tuple[SessionView, Event]]:
     """The tool requests a session is waiting on, with their arguments."""
     requests = {e.tool_use_id: e for e in await client.events(session.session_id) if e.type == EventType.AGENT_TOOL_USE}
     return [(session, requests[c.tool_use_id]) for c in session.pending if c.tool_use_id in requests]
 
 
-async def _inbox(client: Client, session_id: str | None = None) -> list[tuple[Session, Event]]:
+async def _inbox(client: Client, session_id: str | None = None) -> list[tuple[SessionView, Event]]:
     """Every tool call waiting on the caller, or those of one session."""
     sessions = [await client.session(session_id)] if session_id else await client.sessions(role="approver")
     return [call for s in sessions if s.pending for call in await _pending_calls(client, s)]

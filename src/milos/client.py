@@ -24,8 +24,8 @@ from .models import (
     NewMessage,
     NewSession,
     Published,
-    Session,
     SessionStatus,
+    SessionView,
     StopReason,
     Verdict,
 )
@@ -75,16 +75,16 @@ class Client(Api):
         client_request_id: str | None = None,
         approvers: list[str] | None = None,
         viewers: list[str] | None = None,
-    ) -> Session:
+    ) -> SessionView:
         new = NewSession(agent_id=agent_id, message=message, approvers=approvers or [], viewers=viewers or [])
-        return await self.one(Session, "POST", "/sessions", json=new.model_dump() | _request_id(client_request_id))
+        return await self.one(SessionView, "POST", "/sessions", json=new.model_dump() | _request_id(client_request_id))
 
-    async def sessions(self, *, role: SessionRole = "operator") -> list[Session]:
+    async def sessions(self, *, role: SessionRole = "operator") -> list[SessionView]:
         """Sessions you started, or with `role="approver"` those that name you as an approver."""
-        return await self.many(Session, "GET", "/sessions", params={"role": role})
+        return await self.many(SessionView, "GET", "/sessions", params={"role": role})
 
-    async def session(self, session_id: str) -> Session:
-        return await self.one(Session, "GET", f"/sessions/{session_id}")
+    async def session(self, session_id: str) -> SessionView:
+        return await self.one(SessionView, "GET", f"/sessions/{session_id}")
 
     async def events(self, session_id: str, *, after: int = 0) -> list[Event]:
         return await self.many(Event, "GET", f"/sessions/{session_id}/events", params={"after": after})
@@ -101,8 +101,8 @@ class Client(Api):
         body = NewApproval(tool_use_id=tool_use_id, verdict=verdict).model_dump(mode="json")
         return await self.one(Approval, "POST", f"/sessions/{session_id}/approvals", json=body)
 
-    async def terminate(self, session_id: str) -> Session:
-        return await self.one(Session, "POST", f"/sessions/{session_id}/terminate")
+    async def terminate(self, session_id: str) -> SessionView:
+        return await self.one(SessionView, "POST", f"/sessions/{session_id}/terminate")
 
     async def follow(
         self, session_id: str, *, after: int = 0, interval: float = 2.0, through_approvals: bool = True

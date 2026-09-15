@@ -9,6 +9,7 @@ Secure agent platform on Google Cloud. One Python package (`src/milos/`): API, r
 - `uv run mypy` — strict, `src/milos` only; the `Protocol` classes are only enforced here, so keep it green
 - `uv run milos agents validate agents/*.yaml deployments/*/*.yaml` — CI runs it; an invalid definition is never published
 - `terraform fmt -recursive -check infra && terraform -chdir=infra/envs/dev validate` — CI validates it
+- `make console` — build the web console (`console/`, Next.js static export) into `src/milos/console/static/` (gitignored; the Docker image builds its own copy). CI runs `npm run typecheck` and `next build` in `console/`
 
 ## Rules that shape the code
 
@@ -16,6 +17,7 @@ Secure agent platform on Google Cloud. One Python package (`src/milos/`): API, r
 - **Order in `permit`:** first transaction journals the request (and parks the session when a person must decide) → the audit entry is written synchronously → a second transaction creates the permission. Never reorder; the audit entry failing must leave no permission (`test_audit_failure_means_no_permission`).
 - **Authorization lives in `access.py`.** `api.py` only applies `can_view`, `can_operate`, `can_decide` and `Access.member`/`Access.admin`; publishing and enabling need `MILOS_ADMIN_GROUP`; the scheduler routes accept only `MILOS_SCHEDULER_SA`.
 - **Wire types live in `models.py`.** Everything the API accepts or returns is a model there; `runner.py`, `control.py`, `client.py` and `connector.py` never import `service.py`. Every client of the API is a thin layer over `http.Api`.
+- **The console is a client, not a surface.** `console/` calls `/v1` on its own origin with the IAP cookie; it adds no route of its own beyond `GET /v1/me`, decides nothing client-side, and `console/src/lib/types.ts` mirrors `models.py` (keep in sync). The public API returns `SessionView`, never `Session`: the lease token stays inside.
 - **Runner writes carry the lease token.** Any new internal route takes `X-Milos-Session` (session token, verified by `auth.SessionTokens`) and `X-Milos-Lease` (checked by `Service._check_lease`).
 - **Create-only collections** (`permissions`, `approvals`, `requests`) are enforced by `Transaction.create`; do not add update methods for them.
 - **Models are strict** (`extra="forbid"`). New fields go on the model and, when Firestore needs an index, in `modules/runtime/main.tf`.
