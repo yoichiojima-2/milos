@@ -40,7 +40,7 @@ from claude_agent_sdk import (
 )
 
 from .client import Client, id_token
-from .models import Event, EventType, Session, SessionStatus, StopReason, Verdict
+from .models import Event, EventType, SessionStatus, SessionView, StopReason, Verdict
 
 PermissionResult = PermissionResultAllow | PermissionResultDeny
 CanUseTool = Callable[[str, dict[str, Any], ToolPermissionContext], Awaitable[PermissionResult]]
@@ -87,7 +87,7 @@ class MilosClient:
             raise KeyError("MILOS_API_URL")
         self._operator = Client(url, token=options.token or id_token(os.environ.get("MILOS_IAP_CLIENT_ID")))
         self._approver = Client(url, token=options.approver_token) if options.approver_token else None
-        self._session: Session | None = None
+        self._session: SessionView | None = None
         self._after = 0
 
     @property
@@ -124,7 +124,7 @@ class MilosClient:
     async def interrupt(self) -> None:
         await self._operator.interrupt(self._require_session().session_id)
 
-    async def terminate(self) -> Session:
+    async def terminate(self) -> SessionView:
         """End the session. Not in the Agent SDK, where a session dies with its process."""
         self._session = await self._operator.terminate(self._require_session().session_id)
         return self._session
@@ -140,7 +140,7 @@ class MilosClient:
     async def __aexit__(self, *_: object) -> None:
         await self.disconnect()
 
-    def _require_session(self) -> Session:
+    def _require_session(self) -> SessionView:
         if self._session is None:
             raise RuntimeError("no session yet: call query() first")
         return self._session
@@ -169,7 +169,7 @@ class MilosClient:
                 yield _result(session, usage, last_text)
                 return
 
-    async def _decide(self, session: Session) -> None:
+    async def _decide(self, session: SessionView) -> None:
         assert self.options.can_use_tool and self._approver
         events = await self._operator.events(session.session_id)
         calls = {e.tool_use_id: e.payload for e in events if e.type == EventType.AGENT_TOOL_USE}
@@ -210,7 +210,7 @@ def _message(event: Event, model: str) -> Message:
             return SystemMessage(subtype=event.type.value, data=p)
 
 
-def _result(session: Session, usage: dict[str, Any], last_text: str | None) -> ResultMessage:
+def _result(session: SessionView, usage: dict[str, Any], last_text: str | None) -> ResultMessage:
     stop = session.stop_reason
     if session.status == SessionStatus.TERMINATED:
         subtype = "terminated"

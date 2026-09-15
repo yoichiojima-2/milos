@@ -254,8 +254,8 @@ class PendingCall(BaseModel):
     event_id: str  # the agent.tool_use event that journaled the request
 
 
-class Session(Document):
-    """sessions/{session_id}."""
+class SessionFields(Document):
+    """Everything about a session but its lease: shared by the stored `Session` and the public `SessionView`."""
 
     session_id: str
     agent_id: str
@@ -266,7 +266,6 @@ class Session(Document):
     operator: str
     viewers: list[str] = Field(default_factory=list)
     approvers: list[str] = Field(default_factory=list)  # empty: anyone in the agent's groups but the operator
-    lease: Lease | None = None
     snapshot: int = 0  # snapshot number used for restore
     consumed_seq: int = 0  # last user.* event the runner has handled
     last_message_seq: int = 0  # seq of the newest user.message; > consumed_seq means input is waiting
@@ -275,6 +274,32 @@ class Session(Document):
     last_event_seq: int = 0  # seq counter; advanced in the same transaction as the event
     created_at: datetime
     updated_at: datetime
+
+
+class Session(SessionFields):
+    """sessions/{session_id}."""
+
+    lease: Lease | None = None
+
+
+class LeaseView(BaseModel):
+    """A lease as users see it: who holds it and when it last polled, never the token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    runner_id: str
+    last_poll_at: datetime
+
+
+class SessionView(SessionFields):
+    """What the public API returns for a session: the lease token is a runner credential and stays inside."""
+
+    lease: LeaseView | None = None
+
+    @classmethod
+    def of(cls, session: Session) -> "SessionView":
+        lease = LeaseView(runner_id=session.lease.runner_id, last_poll_at=session.lease.last_poll_at) if session.lease else None
+        return cls(**session.model_dump(exclude={"lease"}), lease=lease)
 
 
 class EventType(StrEnum):
@@ -387,6 +412,14 @@ class NewApproval(Wire):
 
 class AgentPatch(Wire):
     enabled: bool
+
+
+class Me(Wire):
+    """Who the API sees, for a client that only has a cookie: the console."""
+
+    email: str
+    admin: bool  # a member of `MILOS_ADMIN_GROUP`
+    now: datetime  # the API's clock, so deadlines render against it rather than the browser's
 
 
 class PermissionRequest(Wire):

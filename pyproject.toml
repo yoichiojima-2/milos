@@ -39,6 +39,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/milos"]
+# The console bundle is generated (`make console`), gitignored, and part of the package.
+artifacts = ["src/milos/console/static/**"]
 
 [tool.ruff]
 line-length = 128

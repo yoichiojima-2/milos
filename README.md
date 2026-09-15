@@ -12,7 +12,7 @@ Three ideas carry the design:
 
 | Part | Runs as | Does |
 | --- | --- | --- |
-| API | Cloud Run service, one image deployed as `public` (behind IAP) and `internal` (runners, connectors, scheduler) | Authorization, sessions and events, tool permissions, job launches |
+| API | Cloud Run service, one image deployed as `public` (behind IAP, also serving the web console) and `internal` (runners, connectors, scheduler) | Authorization, sessions and events, tool permissions, job launches |
 | Runner | Cloud Run Job, one per agent, each under its own service account | The Agent SDK with a `PreToolUse` hook that asks the API before every tool call; snapshots to GCS |
 | Connector | Cloud Run service, `internal` (data, no NAT, no secrets) and `egress` (SaaS credentials, NAT) | MCP tools that check their permission with the API before acting |
 | Scheduler | Cloud Scheduler | Unattended sessions; inspection every minute (expired approvals, stalled runs) |
@@ -76,6 +76,8 @@ async for message in query("Summarise last week's numbers.", options):
 
 `MilosClient` is the `ClaudeSDKClient` counterpart for a conversation, and `can_use_tool` decides parked tool calls from code, as the approver. The walkthrough is [docs/sdk.ipynb](docs/sdk.ipynb).
 
+The web console is the same session in a browser: open the public API's URL, sign in through IAP, and the page lists your sessions and the ones you approve, shows a journal as a chat with the approval card and its countdown, and takes messages, interrupts and terminations from the operator. It is a static page (`console/`, Next.js) the public service serves beside `/v1`, so every action is an ordinary API call under your IAP identity; agents are read-only there, since publishing stays with CI and the admin group.
+
 ## Layout
 
 ```
@@ -95,6 +97,8 @@ src/milos/
   connector.py    MCP connectors with the permission check; web_fetch, data files
   client.py       client for the public API; sdk.py gives it the Agent SDK's shape
   cli.py          `milos`
+  console/        serves the built web console beside /v1 (bundle gitignored)
+console/          the web console (Next.js static export; `make console` builds it into the package)
 agents/           definitions
 infra/            Terraform: modules/{foundation,network,runtime,egress,logging,data,perimeter}, envs/dev
 docs/             design, operations, compliance, sdk.ipynb (using the Python client)
@@ -109,6 +113,7 @@ uv run pytest -q                                  # no credentials needed
 uv run ruff check . && uv run ruff format --check .
 uv run mypy                                       # strict on src/milos
 uv run milos agents validate agents/*.yaml deployments/*/*.yaml
+make console                                      # build the web console into src/milos/console/static/ (Node 22)
 FIRESTORE_EMULATOR_HOST=localhost:8080 uv run pytest -m emulator   # the store against the real emulator
 ```
 
@@ -122,6 +127,8 @@ A local API without GCP:
 MILOS_DEV_USER=you@example.com MILOS_TOKEN_KEY=dev MILOS_PROJECT=local \
 FIRESTORE_EMULATOR_HOST=localhost:8080 uv run milos serve api
 ```
+
+With `make console` run once, the same server serves the console at http://localhost:8080/ as `MILOS_DEV_USER`. For frontend work, `npm run dev` in `console/` proxies `/v1` to that server and reloads on edit.
 
 ## Deploy
 

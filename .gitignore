@@ -15,3 +15,6 @@ infra/**/terraform.tfvars
 
 # saved plans
 *.tfplan
+
+# built console bundle (make console); the Docker image builds its own copy
+src/milos/console/static/

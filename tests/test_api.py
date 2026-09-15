@@ -218,3 +218,70 @@ async def test_approver_lists_sessions_naming_them(public, agent):
     approving = await public.get("/v1/sessions", params={"role": "approver"}, headers=as_lead)
     assert [s["session_id"] for s in approving.json()] == [created.json()["session_id"]]
     assert (await public.get("/v1/sessions", params={"role": "owner"}, headers=as_lead)).status_code == 422
+
+
+# --- the console's needs: identity, a session view without credentials, static pages ---
+
+
+async def test_me_reports_identity_and_admin_membership(public):
+    user = await public.get("/v1/me", headers=as_user("alice@example.com"))
+    assert user.status_code == 200
+    assert user.json()["email"] == "alice@example.com" and user.json()["admin"] is False
+    assert "now" in user.json()
+    admin = await public.get("/v1/me", headers=as_user("admin@example.com"))
+    assert admin.json()["admin"] is True
+
+
+async def test_public_session_never_carries_the_lease_token(public, session):
+    """The lease token authorises runner writes; a viewer must not be able to forge them."""
+    headers = as_user("alice@example.com")
+    one = (await public.get(f"/v1/sessions/{session.session_id}", headers=headers)).json()
+    assert one["lease"] == {"runner_id": session.lease.runner_id, "last_poll_at": one["lease"]["last_poll_at"]}
+    assert "token" not in one["lease"]
+    listed = (await public.get("/v1/sessions", headers=headers)).json()
+    assert all("token" not in (s["lease"] or {}) for s in listed)
+    ended = (await public.post(f"/v1/sessions/{session.session_id}/terminate", headers=headers)).json()
+    assert "token" not in (ended["lease"] or {})
+
+
+STATIC = {
+    "index.html": b"<h1>milos</h1>",
+    "sessions.html": b"<h1>sessions</h1>",
+    "404.html": b"<h1>lost</h1>",
+    "_next/static/app.js": b"console.log(1)",
+}
+
+
+@pytest.fixture
+def with_console(service, tokens, access):
+    app = create_app(service, role="public", tokens=tokens, verifier=FakeIap(), access=access, static=STATIC)
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://public")
+
+
+async def test_console_pages_are_served_beside_the_api(with_console):
+    home = await with_console.get("/")
+    assert home.status_code == 200 and home.content == STATIC["index.html"]
+    assert home.headers["cache-control"] == "no-cache" and home.headers["content-type"].startswith("text/html")
+    # exported pages are flat html files: /sessions is sessions.html
+    page = await with_console.get("/sessions")
+    assert page.status_code == 200 and page.content == STATIC["sessions.html"]
+    asset = await with_console.get("/_next/static/app.js")
+    assert asset.status_code == 200 and "immutable" in asset.headers["cache-control"]
+    assert asset.headers["content-type"].startswith("text/javascript")
+    lost = await with_console.get("/nowhere")
+    assert lost.status_code == 404 and lost.content == STATIC["404.html"]
+
+
+async def test_console_never_shadows_the_api(with_console, agent):
+    """The page is a fallback: API paths keep their JSON answers, and identity is still required."""
+    assert (await with_console.get("/health")).json()["status"] == "ok"
+    assert (await with_console.get("/v1/agents")).status_code == 401
+    listed = await with_console.get("/v1/agents", headers=as_user("alice@example.com"))
+    assert listed.status_code == 200 and listed.json()[0]["agent"]["agent_id"] == "analyst"
+    unknown = await with_console.get("/v1/nothing", headers=as_user("alice@example.com"))
+    assert unknown.status_code == 404 and unknown.json()["error"] == "NotFound"
+
+
+async def test_api_serves_without_a_console(public):
+    """A checkout without the built bundle is still a working API."""
+    assert (await public.get("/")).status_code == 404
