@@ -12,10 +12,11 @@ locals {
 
   connector_urls = merge(var.connector_urls, { internal = local.connector_url })
 
+  # Shared by every runner job; MILOS_SNAPSHOT_BUCKET is added per agent on the
+  # job template, because each agent has its own snapshot bucket.
   runner_env = {
     MILOS_INTERNAL_API_URL = local.internal_url
     MILOS_PROJECT          = var.project
-    MILOS_SNAPSHOT_BUCKET  = google_storage_bucket.snapshots.name
     MILOS_CONNECTOR_URLS   = jsonencode(local.connector_urls)
     MILOS_VERTEX_REGION    = var.vertex_region
   }
@@ -25,7 +26,6 @@ locals {
     MILOS_REGION            = var.region
     MILOS_RUNNER_JOB_PREFIX = "${var.name}-runner"
     MILOS_INTERNAL_URL      = local.internal_url
-    MILOS_SNAPSHOT_BUCKET   = google_storage_bucket.snapshots.name
     MILOS_CONNECTOR_URLS    = jsonencode(local.connector_urls)
     MILOS_VERTEX_REGION     = var.vertex_region
     MILOS_IAP_AUDIENCE      = var.iap_audience
@@ -91,9 +91,13 @@ resource "google_firestore_index" "sessions_by_approver" {
 
 
 
+# One bucket per agent, so a prompt-injected agent cannot read or overwrite
+# another agent's sessions. Sessions of the same agent still share a bucket.
 resource "google_storage_bucket" "snapshots" {
+  for_each = toset(var.agent_ids)
+
   project                     = var.project
-  name                        = "${var.project}-snapshots"
+  name                        = "${var.project}-snapshots-${each.value}"
   location                    = var.region
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
@@ -295,7 +299,7 @@ resource "google_project_iam_member" "runner_vertex" {
 resource "google_storage_bucket_iam_member" "runner_snapshots" {
   for_each = toset(var.agent_ids)
 
-  bucket = google_storage_bucket.snapshots.name
+  bucket = google_storage_bucket.snapshots[each.value].name
   role   = "roles/storage.objectUser"
   member = "serviceAccount:${google_service_account.runner[each.value].email}"
 }
@@ -500,7 +504,7 @@ resource "google_cloud_run_v2_job" "runner" {
         }
 
         dynamic "env" {
-          for_each = local.runner_env
+          for_each = merge(local.runner_env, { MILOS_SNAPSHOT_BUCKET = google_storage_bucket.snapshots[each.value].name })
           content {
             name  = env.key
             value = env.value

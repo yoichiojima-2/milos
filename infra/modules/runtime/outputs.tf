@@ -18,8 +18,8 @@ output "connector_service_account" {
   value = google_service_account.connector.email
 }
 
-output "snapshot_bucket" {
-  value = google_storage_bucket.snapshots.name
+output "snapshot_buckets" {
+  value = { for id, bucket in google_storage_bucket.snapshots : id => bucket.name }
 }
 
 output "image_repository" {

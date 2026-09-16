@@ -34,7 +34,6 @@ class ApiSettings:
     iap_audience: str | None = None
     runner_job_prefix: str = "milos-runner"  # jobs are named <prefix>-<agent_id>
     internal_url: str = ""  # what runners are told to call
-    snapshot_bucket: str = ""
     connector_urls: dict[str, str] = field(default_factory=dict)
     vertex_region: str = "us-east5"
     admin_group: str | None = None  # members may publish, enable and disable definitions
@@ -51,7 +50,6 @@ class ApiSettings:
             iap_audience=os.environ.get("MILOS_IAP_AUDIENCE"),
             runner_job_prefix=_env("MILOS_RUNNER_JOB_PREFIX", "milos-runner"),
             internal_url=_env("MILOS_INTERNAL_URL", ""),
-            snapshot_bucket=_env("MILOS_SNAPSHOT_BUCKET", ""),
             connector_urls=_connector_urls(),
             vertex_region=_env("MILOS_VERTEX_REGION", "us-east5"),
             admin_group=os.environ.get("MILOS_ADMIN_GROUP"),
@@ -60,11 +58,14 @@ class ApiSettings:
         )
 
     def runner_env(self) -> dict[str, str]:
-        """Environment every runner execution receives, on top of the per-session tokens."""
+        """Environment every runner execution receives, on top of the per-session tokens.
+
+        The snapshot bucket is not here: each agent has its own, named on its job
+        template, and an execution's overrides are merged with the template's env.
+        """
         return {
             "MILOS_INTERNAL_API_URL": self.internal_url,
             "MILOS_PROJECT": self.project,
-            "MILOS_SNAPSHOT_BUCKET": self.snapshot_bucket,
             "MILOS_CONNECTOR_URLS": json.dumps(self.connector_urls),
             "MILOS_VERTEX_REGION": self.vertex_region,
         }

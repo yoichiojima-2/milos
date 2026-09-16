@@ -17,7 +17,7 @@ The platform runs business agents that a team shares and that also run unattende
 | Connector | Cloud Run service. One MCP implementation deployed as `internal` (data tools, no NAT, no secrets) and `egress` (SaaS, web fetch; NAT and secrets). Web fetch runs under a separate identity with no secrets | Executing calls the API permitted |
 | Scheduler | Cloud Scheduler | Creating scheduled sessions; inspecting expired approvals and stalled runs |
 | Firestore | collections in §3 | Definitions, session state, events (the journal) |
-| Cloud Storage | `sessions/{id}/snapshots/{n}/` | Transcript and working directory |
+| Cloud Storage | one bucket per agent, `sessions/{id}/snapshots/{n}/` | Transcript and working directory |
 | Cloud Logging | locked log bucket in the logging project | Preservation of the audit record |
 
 Supporting services: Vertex AI, Secret Manager (egress only), Artifact Registry, IAP, VPC Service Controls, PAM, Sensitive Data Protection.
@@ -72,7 +72,8 @@ All seven are enforced in [`service.py`](../src/milos/service.py) and tested in 
 
 ## 5. Bash and isolation
 
-- Bash runs inside the runner container. The runner identity has exactly three reaches: Vertex AI (`roles/aiplatform.user`), the internal API (session token), and the snapshot bucket. Bash can reach nothing else, so allowing it does not widen what the agent can do.
+- Bash runs inside the runner container. The runner identity has exactly three reaches: Vertex AI (`roles/aiplatform.user`), the internal API (session token), and its own agent's snapshot bucket. Bash can reach nothing else, so allowing it does not widen what the agent can do.
+- Snapshot buckets are per agent, so an injected agent reaches neither another agent's transcripts nor its working directories. Sessions of one agent still share a bucket. Narrowing that to one session needs a credential the runner cannot widen: a downscoped token minted by the API, with no bucket role on the runner identity at all. That is the step to take when an agent's sessions carry different classifications or serve different groups.
 - The isolation rests on IAM minimisation. Bash can read the session token and the transcript; it cannot approve. Extra grants to a runner identity are what the service-account reconciliation (REQ-D-08) is for.
 - Cloud Run Jobs run on the second-generation execution environment (microVM). Cloud Run sandboxes (Preview) are not used: pre-GA offerings sit outside the data-processing terms.
 - The SDK's own tools stay enabled and `PreToolUse` sends every call to the API. `WebFetch` and `WebSearch` are disallowed; the web goes through a connector. `setting_sources=[]` keeps repository settings, hooks and skills out; the definition's system prompt is the only instruction.

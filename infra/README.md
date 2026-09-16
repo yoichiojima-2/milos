@@ -7,7 +7,7 @@ modules/
   foundation   the four projects (runtime, logging, egress, data) under the folder; APIs
   network      runtime VPC: no NAT, restricted VIP, default-deny egress
   runtime      API (public + internal), runner jobs per agent, internal connector,
-               Firestore, snapshot bucket, registries, token key, scheduler, alerts
+               Firestore, per-agent snapshot buckets, registries, token key, scheduler, alerts
   egress       egress VPC with NAT, connector + web fetch services, FQDN rules, secrets
   logging      locked audit bucket, folder sink, lien
   data         a data project for one sensitivity class
