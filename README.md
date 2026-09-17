@@ -49,7 +49,7 @@ system_prompt: |
 
 `agents/general.yaml` is the preset: one general assistant a team can start with. A narrower agent is another file with a smaller tool list and its own identity.
 
-BigQuery is reached through the internal connector, never from the sandbox. The connector impersonates the agent's workspace identity, which IAM limits to the datasets above, dry-runs every statement and refuses one that reaches outside, and labels every job with the session so BigQuery's audit log joins the journal. Inside the workspace, tables belong to the session that created them, so concurrent sessions of one agent neither see nor overwrite each other's work.
+BigQuery is reached through the internal connector, never from the sandbox. The connector impersonates the agent's workspace identity, which IAM limits to the datasets above, dry-runs every statement and refuses one that reaches outside, and labels every job with the session so BigQuery's audit log joins the journal.
 
 ## A session
 

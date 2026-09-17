@@ -10,12 +10,6 @@ outside the workspace, or would scan more than the cap. Every job carries the
 session and tool use id as labels, so BigQuery's own audit log joins the
 journal.
 
-Inside the workspace, tables belong to the session that created them: the
-connector labels a new table `milos_session` and lets only that session list,
-read, change or drop it. Sessions of one agent running side by side therefore
-neither see nor overwrite each other's work, and a listing stays the size of
-one session's tables.
-
 `Warehouse` is the adapter protocol; `BigQueryWarehouse` is the real one and
 `tests/fakes.py` has the fake.
 """
@@ -23,7 +17,7 @@ one session's tables.
 import asyncio
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .errors import Forbidden
@@ -34,7 +28,6 @@ MAX_ROWS = 1_000  # rows a query returns
 MAX_SQL_CHARS = 20_000
 QUERY_TIMEOUT = 120  # seconds a statement may run
 BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
-OWNER_LABEL = "milos_session"  # on a workspace table: the session that created it
 
 READ_STATEMENTS = frozenset({"SELECT"})
 WRITE_STATEMENTS = frozenset(
@@ -90,7 +83,6 @@ class TableInfo:
     table: str
     rows: int | None
     columns: list[str]  # "name TYPE"
-    labels: dict[str, str] = field(default_factory=dict)
 
 
 class Warehouse(Protocol):
@@ -106,19 +98,6 @@ class Warehouse(Protocol):
     async def load(self, agent_id: str, table: Table, rows: list[dict[str, Any]], *, labels: dict[str, str]) -> int: ...
 
     async def tables(self, agent_id: str, dataset: str) -> list[TableInfo]: ...
-
-    async def labels(self, agent_id: str, table: Table) -> dict[str, str] | None:
-        """The table's labels, or None when there is no such table."""
-        ...
-
-    async def claim(self, agent_id: str, table: Table, labels: dict[str, str]) -> None:
-        """Add labels to an existing table; nothing happens when the table is gone."""
-        ...
-
-
-def owned(labels: dict[str, str] | None, session: str) -> bool:
-    """Whether a workspace table (by its labels) belongs to this session. A missing table belongs to nobody."""
-    return labels is not None and labels.get(OWNER_LABEL) == session
 
 
 def check_sql(sql: str, *, write: bool = False) -> str:
@@ -242,38 +221,11 @@ class BigQueryWarehouse:
             found = []
             for item in client.list_tables(f"{self._project}.{dataset}", max_results=MAX_ROWS):
                 table = client.get_table(item.reference)
-                columns = [f"{f.name} {f.field_type}" for f in table.schema]
-                found.append(
-                    TableInfo(table=table.table_id, rows=table.num_rows, columns=columns, labels=dict(table.labels or {}))
-                )
+                columns = [f"{field.name} {field.field_type}" for field in table.schema]
+                found.append(TableInfo(table=table.table_id, rows=table.num_rows, columns=columns))
             return found
 
         return await asyncio.to_thread(run)
-
-    async def labels(self, agent_id: str, table: Table) -> dict[str, str] | None:
-        from google.api_core.exceptions import NotFound
-
-        def run() -> dict[str, str] | None:
-            try:
-                return dict(self._client(agent_id).get_table(str(table)).labels or {})
-            except NotFound:
-                return None
-
-        return await asyncio.to_thread(run)
-
-    async def claim(self, agent_id: str, table: Table, labels: dict[str, str]) -> None:
-        from google.api_core.exceptions import NotFound
-
-        def run() -> None:
-            client = self._client(agent_id)
-            try:
-                found = client.get_table(str(table))
-            except NotFound:
-                return
-            found.labels = {**(found.labels or {}), **labels}
-            client.update_table(found, ["labels"])
-
-        await asyncio.to_thread(run)
 
 
 def _table(ref: Any) -> Table:
