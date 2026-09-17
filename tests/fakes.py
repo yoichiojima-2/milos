@@ -181,6 +181,7 @@ class FakeWarehouse:
         self.plans = plans or {}
         self.rows = rows or []
         self.table_lists = tables or {}
+        self.table_labels: dict[str, dict[str, str]] = {}  # "project.dataset.table" -> labels, for tables that exist
         self.jobs: list[dict[str, Any]] = []
         self.loads: list[dict[str, Any]] = []
 
@@ -190,12 +191,26 @@ class FakeWarehouse:
     async def run(self, agent_id: str, sql: str, *, labels: dict[str, str], max_rows: int) -> Rows:
         self.jobs.append({"agent_id": agent_id, "sql": sql, "labels": labels})
         plan = self.plans[sql]
+        for table in plan.writes:  # what the statement does to the tables it targets
+            if plan.statement_type.startswith("DROP"):
+                self.table_labels.pop(str(table), None)
+            else:
+                self.table_labels.setdefault(str(table), {})
         affected = None if plan.statement_type == "SELECT" else len(self.rows)
         return Rows(rows=self.rows[:max_rows], affected=affected, bytes=plan.bytes, truncated=len(self.rows) > max_rows)
 
     async def load(self, agent_id: str, table: Table, rows: list[dict[str, Any]], *, labels: dict[str, str]) -> int:
         self.loads.append({"agent_id": agent_id, "table": table, "rows": rows, "labels": labels})
+        self.table_labels.setdefault(str(table), {})
         return len(rows)
 
     async def tables(self, agent_id: str, dataset: str) -> list[TableInfo]:
         return self.table_lists.get(dataset, [])
+
+    async def labels(self, agent_id: str, table: Table) -> dict[str, str] | None:
+        found = self.table_labels.get(str(table))
+        return dict(found) if found is not None else None
+
+    async def claim(self, agent_id: str, table: Table, labels: dict[str, str]) -> None:
+        if str(table) in self.table_labels:
+            self.table_labels[str(table)].update(labels)

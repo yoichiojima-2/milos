@@ -36,7 +36,18 @@ from .errors import Forbidden
 from .http import Api, ApiError, GoogleIdentity, Identity
 from .models import DataScope, PermissionLookup, sha256_json
 from .settings import MCP_PATH, ConnectorSettings
-from .warehouse import MAX_ROWS, BigQueryWarehouse, Table, Warehouse, check_plan, check_sql, label
+from .warehouse import (
+    MAX_ROWS,
+    OWNER_LABEL,
+    BigQueryWarehouse,
+    Plan,
+    Table,
+    Warehouse,
+    check_plan,
+    check_sql,
+    label,
+    owned,
+)
 
 MAX_URL_LENGTH = 2048
 MAX_REDIRECTS = 3
@@ -276,37 +287,72 @@ def bounded_rows(rows: list[dict[str, Any]], limit: int = MAX_RESULT_BYTES) -> t
     return kept, False
 
 
+class Workspace:
+    """Session ownership of workspace tables: a session lists, reads and writes only the tables it created."""
+
+    def __init__(self, warehouse: Warehouse) -> None:
+        self._warehouse = warehouse
+
+    async def check(self, plan: Plan, scope: DataScope, grant: Grant) -> Plan:
+        """Refuse a statement that reads another session's table, or writes over one; a new table is fine."""
+        session = label(grant.session_id)
+        for table in plan.reads:
+            if table.dataset != scope.workspace or table in plan.writes:
+                continue
+            if not owned(await self._warehouse.labels(scope.agent_id, table), session):
+                raise Forbidden(f"{table} is not a table of this session")
+        for table in plan.writes:
+            labels = await self._warehouse.labels(scope.agent_id, table)
+            if labels is not None and not owned(labels, session):
+                raise Forbidden(f"{table} exists and is not this session's; choose another name")
+        return plan
+
+    async def claim(self, tables: tuple[Table, ...], scope: DataScope, grant: Grant) -> None:
+        """Label the tables a statement created with this session, so later calls recognise them."""
+        for table in tables:
+            labels = await self._warehouse.labels(scope.agent_id, table)
+            if labels is not None and OWNER_LABEL not in labels:
+                await self._warehouse.claim(scope.agent_id, table, {OWNER_LABEL: label(grant.session_id)})
+
+
 def _bigquery_tools(connector: Connector, warehouse: Warehouse) -> None:
     project = warehouse.project
+    workspace = Workspace(warehouse)
 
     @connector.tool
     async def bq_tables(dataset: str, *, grant: Grant) -> list[dict[str, Any]]:
-        """List the tables of one BigQuery dataset the agent may reach, with columns and row counts."""
+        """List the tables of one BigQuery dataset the agent may reach, with columns and row counts. In the workspace, only this session's tables."""
         scope = _scope(grant)
         if dataset not in scope.readable():
             raise Forbidden(f"{dataset} is outside the agent's datasets")
-        return [asdict(t) for t in await warehouse.tables(scope.agent_id, dataset)]
+        found = await warehouse.tables(scope.agent_id, dataset)
+        if dataset == scope.workspace:
+            found = [t for t in found if owned(t.labels, label(grant.session_id))]
+        return [{k: v for k, v in asdict(t).items() if k != "labels"} for t in found]
 
     @connector.tool
     async def bq_query(sql: str, *, grant: Grant) -> dict[str, Any]:
-        """Run one SELECT over the agent's datasets and workspace. Name tables as dataset.table; at most 1000 rows / 200 kB come back."""
+        """Run one SELECT over the agent's datasets and this session's workspace tables. Name tables as dataset.table; at most 1000 rows / 200 kB come back."""
         scope = _scope(grant)
-        check_plan(await warehouse.plan(scope.agent_id, check_sql(sql)), scope, project, write=False)
+        plan = check_plan(await warehouse.plan(scope.agent_id, check_sql(sql)), scope, project, write=False)
+        await workspace.check(plan, scope, grant)
         result = await warehouse.run(scope.agent_id, sql, labels=_labels(grant), max_rows=MAX_ROWS)
         rows, cut = bounded_rows(result.rows)
         return {"rows": rows, "row_count": len(rows), "truncated": result.truncated or cut, "bytes_processed": result.bytes}
 
     @connector.tool
     async def bq_write(sql: str, *, grant: Grant) -> dict[str, Any]:
-        """Run one statement that creates, fills, changes or drops a table in the agent's workspace dataset (CREATE TABLE AS SELECT, INSERT, MERGE, DELETE, DROP TABLE, ...)."""
+        """Run one statement that creates, fills, changes or drops one of this session's tables in the workspace dataset (CREATE TABLE AS SELECT, INSERT, MERGE, DELETE, DROP TABLE, ...)."""
         scope = _scope(grant)
         plan = check_plan(await warehouse.plan(scope.agent_id, check_sql(sql, write=True)), scope, project, write=True)
+        await workspace.check(plan, scope, grant)
         result = await warehouse.run(scope.agent_id, sql, labels=_labels(grant), max_rows=0)
+        await workspace.claim(plan.writes, scope, grant)
         return {"statement": plan.statement_type, "affected_rows": result.affected, "bytes_processed": result.bytes}
 
     @connector.tool
     async def bq_insert_rows(table: str, rows: list[dict[str, Any]], *, grant: Grant) -> dict[str, Any]:
-        """Append rows (JSON objects, at most 1000 per call) to a table in the workspace, creating it from their shape when it does not exist."""
+        """Append rows (JSON objects, at most 1000 per call) to one of this session's workspace tables, creating it from their shape when it does not exist."""
         scope = _scope(grant)
         if not scope.workspace:
             raise Forbidden("the definition has no workspace")
@@ -317,7 +363,9 @@ def _bigquery_tools(connector: Connector, warehouse: Warehouse) -> None:
         if len(json.dumps(rows, separators=(",", ":"))) > MAX_INSERT_BYTES:
             raise Forbidden(f"rows exceed {MAX_INSERT_BYTES} bytes")
         target = Table(project=project, dataset=scope.workspace, table=table)
+        await workspace.check(Plan(statement_type="INSERT", reads=(), writes=(target,), bytes=0), scope, grant)
         loaded = await warehouse.load(scope.agent_id, target, rows, labels=_labels(grant))
+        await workspace.claim((target,), scope, grant)
         return {"table": str(target), "inserted_rows": loaded}
 
 

@@ -209,13 +209,29 @@ PLANS = {
     "script": plan("SCRIPT"),
     "create schema": plan("CREATE_SCHEMA"),
     "alter expiration_timestamp": plan("ALTER_TABLE", writes=(table("agent_analyst"),)),
+    # session ownership inside the workspace
+    "select theirs": plan(reads=(table("agent_analyst", "theirs"),)),
+    "select missing": plan(reads=(table("agent_analyst", "missing"),)),
+    "replace theirs": plan(
+        "CREATE_TABLE_AS_SELECT", reads=(table("weekly_numbers"),), writes=(table("agent_analyst", "theirs"),)
+    ),
+    "insert mine": plan("INSERT", reads=(table("agent_analyst", "notes"),), writes=(table("agent_analyst", "notes"),)),
+    "replace seeded": plan(
+        "CREATE_TABLE_AS_SELECT", reads=(table("weekly_numbers"),), writes=(table("agent_analyst", "seeded"),)
+    ),
 }
 
 
-def bigquery(scope: DataScope | None = SCOPE, **kwargs: Any):
+MINE = {"milos_session": "sess_1"}
+THEIRS = {"milos_session": "sess_2"}
+
+
+def bigquery(scope: DataScope | None = SCOPE, session: str = "sess_1", **kwargs: Any):
     warehouse = FakeWarehouse(plans=PLANS, **kwargs)
+    # tables that already exist in the workspace: one of this session's, one of another's
+    warehouse.table_labels = {"data.agent_analyst.notes": dict(MINE), "data.agent_analyst.theirs": dict(THEIRS)}
     c = connector.internal(Check(allow=True, scope=scope), warehouse=warehouse)
-    return warehouse, c.mcp._tool_manager, Ctx({"x-milos-session": "sess_1.sig"})
+    return warehouse, c.mcp._tool_manager, Ctx({"x-milos-session": f"{session}.sig"})
 
 
 def test_bigquery_tools_hide_the_grant_from_their_schema():
@@ -284,6 +300,65 @@ async def test_bq_tables_lists_reachable_datasets_only():
     assert found == [{"table": "sales", "rows": 52, "columns": ["week STRING", "revenue INTEGER"]}]
     with pytest.raises(Forbidden):
         await tools.get_tool("bq_tables").fn(ctx, dataset="agent_other")
+
+
+async def test_workspace_tables_belong_to_the_session_that_created_them():
+    warehouse, tools, ctx = bigquery()
+    query, write = tools.get_tool("bq_query").fn, tools.get_tool("bq_write").fn
+
+    # a new table is claimed for this session once the statement created it
+    await write(ctx, sql="ctas")
+    assert warehouse.table_labels["data.agent_analyst.summary"] == MINE
+    await write(ctx, sql="insert mine")  # one's own table may be changed
+    assert [j["sql"] for j in warehouse.jobs] == ["ctas", "insert mine"]
+    await write(ctx, sql="drop")  # and dropped, after which the name is free again
+    assert "data.agent_analyst.summary" not in warehouse.table_labels
+
+    # a table nobody created through milos (seeded by hand, or before ownership existed) is nobody's
+    warehouse.table_labels["data.agent_analyst.seeded"] = {}
+    with pytest.raises(Forbidden):
+        await write(ctx, sql="replace seeded")
+
+    # another session's table can be neither read nor replaced; a missing table cannot be read
+    for tool, sql in ((query, "select theirs"), (write, "replace theirs"), (query, "select missing")):
+        with pytest.raises(Forbidden):
+            await tool(ctx, sql=sql)
+    assert len(warehouse.jobs) == 3
+    assert warehouse.table_labels["data.agent_analyst.theirs"] == THEIRS
+
+    # the other session sees its own table and not this one's
+    _, tools2, ctx2 = bigquery(session="sess_2")
+    with pytest.raises(Forbidden):
+        await tools2.get_tool("bq_query").fn(ctx2, sql="select shared")  # reads agent_analyst.notes, owned by sess_1
+    await tools2.get_tool("bq_query").fn(ctx2, sql="select theirs")
+
+
+async def test_bq_tables_lists_only_the_sessions_workspace_tables():
+    listing = {
+        "agent_analyst": [
+            TableInfo(table="notes", rows=1, columns=["a STRING"], labels=MINE),
+            TableInfo(table="theirs", rows=1, columns=["a STRING"], labels=THEIRS),
+            TableInfo(table="seeded", rows=1, columns=["a STRING"]),
+        ],
+        "weekly_numbers": [TableInfo(table="sales", rows=52, columns=["week STRING"])],
+    }
+    _, tools, ctx = bigquery(tables=listing)
+    mine = await tools.get_tool("bq_tables").fn(ctx, dataset="agent_analyst")
+    assert mine == [{"table": "notes", "rows": 1, "columns": ["a STRING"]}]
+    shared = await tools.get_tool("bq_tables").fn(ctx, dataset="weekly_numbers")
+    assert [t["table"] for t in shared] == ["sales"]
+
+
+async def test_bq_insert_rows_respects_session_ownership():
+    warehouse, tools, ctx = bigquery()
+    insert = tools.get_tool("bq_insert_rows").fn
+    rows = [{"a": 1}]
+    with pytest.raises(Forbidden):
+        await insert(ctx, table="theirs", rows=rows)
+    assert await insert(ctx, table="notes", rows=rows) == {"table": "data.agent_analyst.notes", "inserted_rows": 1}
+    await insert(ctx, table="fresh", rows=rows)
+    assert warehouse.table_labels["data.agent_analyst.fresh"] == MINE
+    assert [load["table"].table for load in warehouse.loads] == ["notes", "fresh"]
 
 
 async def test_bigquery_tools_without_a_scope_are_refused():

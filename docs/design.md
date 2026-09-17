@@ -18,7 +18,7 @@ The platform runs business agents that a team shares and that also run unattende
 | Scheduler | Cloud Scheduler | Creating scheduled sessions; inspecting expired approvals and stalled runs |
 | Firestore | collections in §3 | Definitions, session state, events (the journal) |
 | Cloud Storage | `sessions/{id}/snapshots/{n}/` | Transcript and working directory |
-| BigQuery | data project: shared datasets per class, `agent_{id}` per agent | Data the agent queries and the tables it derives, across sessions |
+| BigQuery | data project: shared datasets per class, `agent_{id}` per agent with tables owned per session | Data the agent queries and the tables a session derives |
 | Cloud Logging | locked log bucket in the logging project | Preservation of the audit record |
 
 Supporting services: Vertex AI, Secret Manager (egress only), Artifact Registry, IAP, VPC Service Controls, PAM, Sensitive Data Protection.
@@ -45,9 +45,11 @@ The definition lives in Git and bundles purpose, owner, allowed groups, data cla
 
 ### Workspace
 
-An agent that declares `workspace: true` owns one BigQuery dataset, `agent_{id}`, in the data project of its class; `datasets` names the shared datasets of that project it may read. Terraform creates the dataset and a *workspace identity* (`milos-workspace-{id}`) that alone holds `dataEditor` on it, `dataViewer` on the listed datasets and `jobUser` on the project. Nothing in the sandbox holds that identity: the internal connector impersonates it per permitted call. The workspace persists across the agent's sessions; tables inherit the class retention, and the agent cannot change it.
+An agent that declares `workspace: true` owns one BigQuery dataset, `agent_{id}`, in the data project of its class; `datasets` names the shared datasets of that project it may read. Terraform creates the dataset and a *workspace identity* (`milos-workspace-{id}`) that alone holds `dataEditor` on it, `dataViewer` on the listed datasets and `jobUser` on the project. Nothing in the sandbox holds that identity: the internal connector impersonates it per permitted call. Tables inherit the class retention, and the agent cannot change it.
 
-The connector's tools are `bq_tables`, `bq_query` (SELECT), `bq_write` (DDL and DML whose target is the workspace) and `bq_insert_rows` (rows from the working directory, inline). The API's permission answer carries the scope (`DataScope`: agent, datasets, workspace) so the connector learns what a call may reach from the API alone. Every statement is dry-run first and refused when it references a table outside the scope, writes outside the workspace, is not a plain SELECT or a known DDL/DML statement, or would scan more than the cap; every job carries the session, agent and tool use id as labels, so BigQuery's data access log in the locked bucket joins the journal.
+Inside the dataset, a table belongs to the session that created it: the connector labels it `milos_session` and lets only that session list, read, change or drop it. Sessions of one agent running side by side therefore neither see nor overwrite each other's work, and a listing stays the size of one session's tables, like the snapshot's working directory. A table nobody created through milos is nobody's and stays untouched. Persistent data belongs in the shared datasets, loaded by the data project's pipelines.
+
+The connector's tools are `bq_tables`, `bq_query` (SELECT), `bq_write` (DDL and DML whose target is the workspace) and `bq_insert_rows` (rows from the working directory, inline). The API's permission answer carries the scope (`DataScope`: agent, datasets, workspace) so the connector learns what a call may reach from the API alone. Every statement is dry-run first and refused when it references a table outside the scope, writes outside the workspace, touches a workspace table of another session, is not a plain SELECT or a known DDL/DML statement, or would scan more than the cap; every job carries the session, agent and tool use id as labels, so BigQuery's data access log in the locked bucket joins the journal.
 
 ### Invariants
 
