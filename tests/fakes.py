@@ -2,9 +2,10 @@
 
 They implement the same protocols as the real adapters (`milos.store.Store`,
 `milos.audit.AuditLog`, `milos.jobs.JobLauncher`, `milos.auth.Directory`,
-`milos.snapshots.Blobs`) with just enough semantics for the invariants to be
-testable: create-only documents, transactions that roll back on error, and
-queries with the operators the service uses.
+`milos.snapshots.Blobs`, `milos.warehouse.Warehouse`) with just enough
+semantics for the invariants to be testable: create-only documents,
+transactions that roll back on error, and queries with the operators the
+service uses.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from milos.errors import AlreadyExists
+from milos.warehouse import Plan, Rows, Table, TableInfo
 
 
 def _matches(doc: dict[str, Any], where: Sequence[tuple[str, str, Any]]) -> bool:
@@ -162,3 +164,38 @@ class FakeBlobs:
 
     async def get(self, path: str) -> bytes | None:
         return self.objects.get(path)
+
+
+class FakeWarehouse:
+    """Dry-run plans keyed by SQL text, the rows every query returns, and a record of every job and load."""
+
+    def __init__(
+        self,
+        project: str = "data",
+        *,
+        plans: dict[str, Plan] | None = None,
+        rows: list[dict[str, Any]] | None = None,
+        tables: dict[str, list[TableInfo]] | None = None,
+    ) -> None:
+        self.project = project
+        self.plans = plans or {}
+        self.rows = rows or []
+        self.table_lists = tables or {}
+        self.jobs: list[dict[str, Any]] = []
+        self.loads: list[dict[str, Any]] = []
+
+    async def plan(self, agent_id: str, sql: str) -> Plan:
+        return self.plans[sql]
+
+    async def run(self, agent_id: str, sql: str, *, labels: dict[str, str], max_rows: int) -> Rows:
+        self.jobs.append({"agent_id": agent_id, "sql": sql, "labels": labels})
+        plan = self.plans[sql]
+        affected = None if plan.statement_type == "SELECT" else len(self.rows)
+        return Rows(rows=self.rows[:max_rows], affected=affected, bytes=plan.bytes, truncated=len(self.rows) > max_rows)
+
+    async def load(self, agent_id: str, table: Table, rows: list[dict[str, Any]], *, labels: dict[str, str]) -> int:
+        self.loads.append({"agent_id": agent_id, "table": table, "rows": rows, "labels": labels})
+        return len(rows)
+
+    async def tables(self, agent_id: str, dataset: str) -> list[TableInfo]:
+        return self.table_lists.get(dataset, [])

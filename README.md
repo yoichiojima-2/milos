@@ -14,7 +14,7 @@ Three ideas carry the design:
 | --- | --- | --- |
 | API | Cloud Run service, one image deployed as `public` (behind IAP, also serving the web console) and `internal` (runners, connectors, scheduler) | Authorization, sessions and events, tool permissions, job launches |
 | Runner | Cloud Run Job, one per agent, each under its own service account | The Agent SDK with a `PreToolUse` hook that asks the API before every tool call; snapshots to GCS |
-| Connector | Cloud Run service, `internal` (data, no NAT, no secrets) and `egress` (SaaS credentials, NAT) | MCP tools that check their permission with the API before acting |
+| Connector | Cloud Run service, `internal` (data files and BigQuery, no NAT, no secrets) and `egress` (SaaS credentials, NAT) | MCP tools that check their permission with the API before acting |
 | Scheduler | Cloud Scheduler | Unattended sessions; inspection every minute (expired approvals, stalled runs) |
 | Firestore | runtime project | Agents, sessions, events, permissions, approvals |
 | Cloud Storage | `sessions/{id}/snapshots/{n}/` | Transcript and working directory |
@@ -24,33 +24,39 @@ The full design is in [docs/design.md](docs/design.md); how it maps to ISO/IEC 2
 
 ## An agent
 
-An agent is a YAML definition in Git. CI validates it; only validated definitions are published, as immutable versions. The definition names the purpose, the owner, who may start it, which data classes it touches, which tools it may use and which of those need a person, its limits, its model and its runner identity. The registry of what is deployed is generated from the published versions (`milos agents registry`), never written by hand.
+An agent is a YAML definition in Git. CI validates it; only validated definitions are published, as immutable versions. The definition names the purpose, the owner, who may start it, which data classes it touches, which tools it may use and which of those need a person, its limits, its model, its runner identity, and the BigQuery datasets it reads and the workspace dataset it may write. The registry of what is deployed is generated from the published versions (`milos agents registry`), never written by hand.
 
 ```yaml
-agent_id: analyst
-purpose: Summarise the weekly numbers into a short report.
+agent_id: general
+purpose: General-purpose assistant for the team's everyday tasks.
 owner: owner@example.com
-allowed_groups: [analysts@example.com]
+allowed_groups: [agent-users@example.com]
 data_classes: [C1]
-allowed_tools: [Read, Glob, Grep, Write, Bash, mcp__egress__web_fetch]
+allowed_tools: [Read, Glob, Grep, Write, Edit, Bash, mcp__internal__bq_query, mcp__internal__bq_write, mcp__egress__web_fetch]
 approval_required: [Bash, mcp__egress__web_fetch]
 approval_ttl_sec: 3600
 max_turns: 40
 max_budget_usd: 5.0
-max_concurrent_sessions: 2
+max_concurrent_sessions: 4
 model: claude-sonnet-5@20260601
-runner_sa: milos-runner-analyst@milos-runtime-dev.iam.gserviceaccount.com
-connectors: [egress]
+runner_sa: milos-runner-general@milos-runtime-dev.iam.gserviceaccount.com
+connectors: [internal, egress]
+datasets: [weekly_numbers]   # shared BigQuery datasets it may read
+workspace: true              # a dataset of its own, agent_general, to read and write
 system_prompt: |
-  You are a careful analyst. Work only inside the working directory.
+  You are a careful, general-purpose assistant. Work only inside the working directory.
 ```
+
+`agents/general.yaml` is the preset: one general assistant a team can start with. A narrower agent is another file with a smaller tool list and its own identity.
+
+BigQuery is reached through the internal connector, never from the sandbox. The connector impersonates the agent's workspace identity, which IAM limits to the datasets above, dry-runs every statement and refuses one that reaches outside, and labels every job with the session so BigQuery's audit log joins the journal.
 
 ## A session
 
 ```sh
 milos agents list                       # what you may run, and which tools pause for approval
 milos agents publish deployments/dev/*.yaml   # admin group: validate locally, publish through the API
-milos run analyst "Summarise last week's numbers." --approver lead@example.com
+milos run general "Summarise last week's numbers." --approver lead@example.com
 milos pending                           # as the approver: waiting calls with their arguments
 milos allow                             # decide; ids are needed only when several calls wait
 milos sessions                          # status, stop reason, pending tool calls
@@ -69,7 +75,7 @@ From Python the same session has the shape of the [Claude Agent SDK](https://cod
 ```python
 from milos import MilosOptions, PermissionResultAllow, query
 
-options = MilosOptions(agent="analyst", approvers=["lead@example.com"])
+options = MilosOptions(agent="general", approvers=["lead@example.com"])
 async for message in query("Summarise last week's numbers.", options):
     print(message)
 ```
@@ -94,7 +100,8 @@ src/milos/
   http.py         the one HTTP base for every client of the API
   control.py      the runner's client for the internal API
   snapshots.py    GCS snapshots of transcript and working directory
-  connector.py    MCP connectors with the permission check; web_fetch, data files
+  connector.py    MCP connectors with the permission check; web_fetch, data files, BigQuery tools
+  warehouse.py    BigQuery behind the internal connector: per-agent identity, dry-run scoping, bounds
   client.py       client for the public API; sdk.py gives it the Agent SDK's shape
   cli.py          `milos`
   console/        serves the built web console beside /v1 (bundle gitignored)

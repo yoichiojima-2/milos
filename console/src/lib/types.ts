@@ -86,6 +86,8 @@ export interface AgentVersion {
   runner_sa: string;
   system_prompt: string;
   connectors: string[];
+  datasets: string[];
+  workspace: boolean;
   published_at: string;
 }
 

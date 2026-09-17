@@ -29,3 +29,12 @@ variable "datasets" {
   }))
   default = {}
 }
+
+variable "workspaces" {
+  description = "Agent id -> its workspace identity and the shared datasets (keys of var.datasets) it may read. Each gets a dataset agent_<id>."
+  type = map(object({
+    service_account = string
+    datasets        = optional(list(string), [])
+  }))
+  default = {}
+}

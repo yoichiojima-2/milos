@@ -14,10 +14,11 @@ The platform runs business agents that a team shares and that also run unattende
 | --- | --- | --- |
 | API | Cloud Run service. One image deployed as `public` (behind IAP, for users; also serves the console) and `internal` (internal ingress + IAM invoker, for runners, connectors and the scheduler) | Authorization; sessions and events; tool permissions; job launches |
 | Runner | Cloud Run Job, one per agent, agent-specific service account | The Agent SDK and bash; polling the API; saving and restoring snapshots |
-| Connector | Cloud Run service. One MCP implementation deployed as `internal` (data tools, no NAT, no secrets) and `egress` (SaaS, web fetch; NAT and secrets). Web fetch runs under a separate identity with no secrets | Executing calls the API permitted |
+| Connector | Cloud Run service. One MCP implementation deployed as `internal` (data files and BigQuery, no NAT, no secrets) and `egress` (SaaS, web fetch; NAT and secrets). Web fetch runs under a separate identity with no secrets | Executing calls the API permitted |
 | Scheduler | Cloud Scheduler | Creating scheduled sessions; inspecting expired approvals and stalled runs |
 | Firestore | collections in §3 | Definitions, session state, events (the journal) |
 | Cloud Storage | `sessions/{id}/snapshots/{n}/` | Transcript and working directory |
+| BigQuery | data project: shared datasets per class, `agent_{id}` per agent | Data the agent queries and the tables it derives, across sessions |
 | Cloud Logging | locked log bucket in the logging project | Preservation of the audit record |
 
 Supporting services: Vertex AI, Secret Manager (egress only), Artifact Registry, IAP, VPC Service Controls, PAM, Sensitive Data Protection.
@@ -40,7 +41,13 @@ Vocabulary: the runner sends a *permission request* and the API answers with an 
 
 ### Agent
 
-The definition lives in Git and bundles purpose, owner, allowed groups, data classes, allowed tools, approval conditions, model, runner identity, limits and the impact assessment reference. CI validates it (`milos agents validate`) and publishes only validated files as `agents/{id}/versions/{n}`. The registry, the user-facing description and the service-account table are generated from published versions. A definition with missing mandatory fields, no published version, or `enabled: false` is refused on every launch path. `enabled` lives on `agents/{id}`, not on the version: setting it to `false` refuses new sessions and stops running ones at their next permission request or poll.
+The definition lives in Git and bundles purpose, owner, allowed groups, data classes, allowed tools, approval conditions, model, runner identity, limits, the BigQuery datasets it reads and whether it has a workspace, and the impact assessment reference. CI validates it (`milos agents validate`) and publishes only validated files as `agents/{id}/versions/{n}`. The registry, the user-facing description and the service-account table are generated from published versions. A definition with missing mandatory fields, no published version, or `enabled: false` is refused on every launch path. `enabled` lives on `agents/{id}`, not on the version: setting it to `false` refuses new sessions and stops running ones at their next permission request or poll.
+
+### Workspace
+
+An agent that declares `workspace: true` owns one BigQuery dataset, `agent_{id}`, in the data project of its class; `datasets` names the shared datasets of that project it may read. Terraform creates the dataset and a *workspace identity* (`milos-workspace-{id}`) that alone holds `dataEditor` on it, `dataViewer` on the listed datasets and `jobUser` on the project. Nothing in the sandbox holds that identity: the internal connector impersonates it per permitted call. The workspace persists across the agent's sessions; tables inherit the class retention, and the agent cannot change it.
+
+The connector's tools are `bq_tables`, `bq_query` (SELECT), `bq_write` (DDL and DML whose target is the workspace) and `bq_insert_rows` (rows from the working directory, inline). The API's permission answer carries the scope (`DataScope`: agent, datasets, workspace) so the connector learns what a call may reach from the API alone. Every statement is dry-run first and refused when it references a table outside the scope, writes outside the workspace, is not a plain SELECT or a known DDL/DML statement, or would scan more than the cap; every job carries the session, agent and tool use id as labels, so BigQuery's data access log in the locked bucket joins the journal.
 
 ### Invariants
 
@@ -99,7 +106,8 @@ All projects sit under the department folder with Google-managed encryption.
 | runner (per agent) | Vertex AI; the snapshot bucket; the internal API; package remotes |
 | scheduler | invoke the internal API; its identity is verified on the routes it uses |
 | admin group (people and CI) | publish, enable and disable definitions through the public API |
-| internal connector | read approved data; no NAT, no secrets |
+| internal connector | read approved data; impersonate workspace identities; no NAT, no secrets |
+| workspace (per agent) | its own BigQuery dataset (read and write), the definition's shared datasets (read), query jobs in the data project; held by no container |
 | egress connector | the SaaS secrets; no data |
 | web fetch | nothing |
 

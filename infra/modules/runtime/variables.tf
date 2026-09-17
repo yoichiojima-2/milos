@@ -120,3 +120,15 @@ variable "data_bucket" {
   type        = string
   default     = null
 }
+
+variable "data_project" {
+  description = "The data project whose BigQuery datasets the internal connector reaches (its bq_* tools). Null registers no BigQuery tools."
+  type        = string
+  default     = null
+}
+
+variable "workspace_agent_ids" {
+  description = "Agents with a BigQuery workspace: one workspace identity each, impersonated by the internal connector."
+  type        = list(string)
+  default     = []
+}

@@ -137,7 +137,8 @@ async def test_connector_permission_check(internal, service, session, tokens):
         params={"tool_name": "Read", "args_sha256": sha256_json({"path": "x"})},
         headers=headers,
     )
-    assert found.json() == {"permitted": True, "tool_use_id": "t1"}
+    scope = {"agent_id": "analyst", "datasets": [], "workspace": None}
+    assert found.json() == {"permitted": True, "tool_use_id": "t1", "scope": scope}
 
 
 async def test_scheduler_creates_idempotent_sessions(internal, agent, jobs):

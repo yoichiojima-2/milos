@@ -48,6 +48,7 @@ The design marks these as things to confirm on real hardware. Do them in order w
 6. **Connector token lifetime.** The runner passes an identity token to connectors in MCP headers at start; tokens expire after an hour. Confirm a run longer than an hour still reaches the connector, or lower `runner_timeout`.
 7. **Synchronous audit.** Stop the logging API (deny `logging.logWriter` temporarily) and confirm a tool request is denied and no permission document exists.
 8. **Admin gate.** `milos agents publish` with the operator's token must fail with a one-line 403; with the admin token it publishes.
+9. **Workspace identity.** With `workspaces` set in tfvars and `workspace: true` in the definition, a `bq_tables` call on the workspace dataset must succeed, and the BigQuery job history of the data project must show the job under `milos-workspace-<agent>` with the `milos_session` label. A `bq_query` naming another agent's dataset must be refused by the connector, and the same statement run by hand as the workspace identity must fail on IAM. If impersonation fails from Cloud Run, check that `iamcredentials.googleapis.com` resolves to the restricted VIP.
 
 ## Runbooks
 
@@ -56,6 +57,8 @@ The design marks these as things to confirm on real hardware. Do them in order w
 **Stop one session.** `milos interrupt` ends the current turn; `milos terminate` ends the session for good.
 
 **Stop an agent.** `milos agents disable <agent>` as a member of the admin group. Every session of that agent stops at its next tool request or poll; new sessions are refused. `enable` reverses it.
+
+**Give an agent a dataset.** Add the shared dataset to `datasets` and the agent to `workspaces` in the environment's tfvars, apply, then list the dataset under `datasets` (and set `workspace: true`) in the deployment's definition and publish. The order matters: Terraform is what grants the workspace identity, and a definition that names a dataset Terraform has not granted fails on IAM, never open.
 
 **Stalled run.** Inspection restarts a run silent for 60 s once; if the restart stalls too the session becomes `needs_attention`. Look at the job's execution logs, fix the cause, and send a message to restart it, or terminate it.
 
@@ -78,7 +81,7 @@ An API without GCP, against the Firestore emulator:
 gcloud emulators firestore start --host-port=localhost:8080 &
 MILOS_DEV_USER=you@example.com MILOS_TOKEN_KEY=dev MILOS_PROJECT=local \
 FIRESTORE_EMULATOR_HOST=localhost:8080 uv run milos serve api --port 8080
-MILOS_API_URL=http://localhost:8080 MILOS_ID_TOKEN=x uv run milos run analyst "hello"
+MILOS_API_URL=http://localhost:8080 MILOS_ID_TOKEN=x uv run milos run general "hello"
 ```
 
 With `MILOS_DEV_USER` set, the API trusts that email, treats it as a member of every group including the admin group, logs audit entries to stderr, and creates sessions without launching jobs. Each new session prints the environment a runner job would receive, tokens included, to the API's stderr; export it (with `MILOS_INTERNAL_API_URL` pointing at an API started with `MILOS_API_ROLE=internal`) and `uv run python -m milos.runner` to run one by hand. `FIRESTORE_EMULATOR_HOST=localhost:8080 uv run pytest -m emulator` runs the store's own tests against the emulator.

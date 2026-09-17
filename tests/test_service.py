@@ -5,7 +5,17 @@ from __future__ import annotations
 import pytest
 
 from milos.errors import AlreadyExists, Conflict, Forbidden, Invalid, NotFound, Stopped
-from milos.models import EventType, Outcome, RunnerEvent, SessionStatus, StopReason, Verdict
+from milos.models import (
+    DataScope,
+    EventType,
+    Outcome,
+    PermissionLookup,
+    RunnerEvent,
+    SessionStatus,
+    StopReason,
+    Verdict,
+    sha256_json,
+)
 
 from .conftest import definition
 
@@ -367,11 +377,21 @@ async def test_budget_reached_is_recorded(service, session):
 async def test_connector_permission_lookup(service, session):
     sid = session.session_id
     await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={"path": "x"})
-    from milos.models import sha256_json
-
     found = await service.permission(sid, tool_name="Read", args_sha256=sha256_json({"path": "x"}))
-    assert found and found.tool_use_id == "t1"
-    assert await service.permission(sid, tool_name="Read", args_sha256=sha256_json({"path": "y"})) is None
+    assert found.permitted and found.tool_use_id == "t1"
+    # the scope comes from the version pinned to the session, so the connector needs no other lookup
+    assert found.scope == DataScope(agent_id="analyst", datasets=[], workspace=None)
+    other = await service.permission(sid, tool_name="Read", args_sha256=sha256_json({"path": "y"}))
+    assert other == PermissionLookup(permitted=False)
+
+
+async def test_permission_lookup_carries_the_definition_scope(service):
+    await service.publish(definition(datasets=["weekly_numbers"], workspace=True))
+    session = await service.create_session("analyst", "hello", operator="alice@example.com", client_request_id="r")
+    sid = session.session_id
+    await service.permit(sid, lease_token=lease(session), tool_use_id="t1", tool_name="Read", args={"path": "x"})
+    found = await service.permission(sid, tool_name="Read", args_sha256=sha256_json({"path": "x"}))
+    assert found.scope == DataScope(agent_id="analyst", datasets=["weekly_numbers"], workspace="agent_analyst")
 
 
 async def test_publish_increments_version(service):

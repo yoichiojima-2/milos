@@ -171,18 +171,18 @@ def test_missing_gcloud_is_one_line(monkeypatch, capsys):
 
 
 def test_admin_commands_publish_enable_and_list_the_registry(as_user, service, capsys):
-    definition = str(REPO / "agents" / "analyst.yaml")
+    definition = str(REPO / "agents" / "general.yaml")
     as_user("alice@example.com")
     assert cli.main(["agents", "publish", definition]) == 1
     assert "403" in capsys.readouterr().err
     as_user("admin@example.com")
     assert cli.main(["agents", "publish", definition]) == 0
-    assert capsys.readouterr().out.strip() == "published analyst v1"
-    assert cli.main(["agents", "disable", "analyst"]) == 0
+    assert capsys.readouterr().out.strip() == "published general v1"
+    assert cli.main(["agents", "disable", "general"]) == 0
     assert "enabled=False" in capsys.readouterr().out
     assert cli.main(["agents", "registry"]) == 0
     table = capsys.readouterr().out
-    assert "| analyst | 1 | no |" in table and "owner@example.com" in table
+    assert "| general | 1 | no |" in table and "owner@example.com" in table
 
 
 def test_registry_is_generated_from_published_versions(as_user, service, agent, capsys):

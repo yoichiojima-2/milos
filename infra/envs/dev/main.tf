@@ -44,6 +44,14 @@ locals {
     for id in var.agent_ids :
     "milos-runner-${id}@${module.foundation.project_ids.runtime}.iam.gserviceaccount.com"
   ]
+  # Workspace identities are named the same way, so the data module can grant
+  # them without depending on the runtime module.
+  workspaces = {
+    for id, w in var.workspaces : id => {
+      service_account = "milos-workspace-${id}@${module.foundation.project_ids.runtime}.iam.gserviceaccount.com"
+      datasets        = w.datasets
+    }
+  }
 }
 
 module "foundation" {
@@ -117,9 +125,11 @@ module "runtime" {
   direct_anthropic_api         = var.direct_anthropic_api
   # The data module's bucket name is deterministic; naming it avoids a module cycle
   # (data grants the connector identity read access).
-  data_bucket = "${module.foundation.project_ids.data}-data"
-  schedules   = var.schedules
-  alert_email = var.alert_email
+  data_bucket         = "${module.foundation.project_ids.data}-data"
+  data_project        = module.foundation.project_ids.data
+  workspace_agent_ids = keys(var.workspaces)
+  schedules           = var.schedules
+  alert_email         = var.alert_email
 
   depends_on = [module.foundation]
 }
@@ -132,6 +142,8 @@ module "data" {
   classification          = "C1"
   retention_days          = 365
   reader_service_accounts = { connector = module.runtime.connector_service_account }
+  datasets                = var.datasets
+  workspaces              = local.workspaces
 
   depends_on = [module.foundation]
 }

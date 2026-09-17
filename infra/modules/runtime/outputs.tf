@@ -35,3 +35,8 @@ output "build_source_bucket" {
   description = "Pass as `gcloud builds submit --gcs-source-staging-dir=gs://<bucket>/source`."
   value       = google_storage_bucket.build_source.name
 }
+
+output "workspace_service_accounts" {
+  description = "Agent id -> the identity its BigQuery jobs run as."
+  value       = { for id, sa in google_service_account.workspace : id => sa.email }
+}

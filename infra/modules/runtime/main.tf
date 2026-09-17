@@ -256,6 +256,25 @@ resource "google_service_account" "runner" {
   display_name = "milos runner for agent ${each.value}"
 }
 
+# Workspace identities: what an agent is in BigQuery. Held by nobody's
+# container; the internal connector impersonates one per call, and the data
+# module grants it that agent's workspace dataset and readable datasets.
+resource "google_service_account" "workspace" {
+  for_each = toset(var.workspace_agent_ids)
+
+  project      = var.project
+  account_id   = "${var.name}-workspace-${each.value}"
+  display_name = "milos BigQuery workspace of agent ${each.value}"
+}
+
+resource "google_service_account_iam_member" "connector_impersonates_workspace" {
+  for_each = toset(var.workspace_agent_ids)
+
+  service_account_id = google_service_account.workspace[each.value].name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.connector.email}"
+}
+
 # API: Firestore, launching jobs with overrides, audit logging, the token key.
 resource "google_project_iam_member" "api" {
   for_each = toset(["roles/datastore.user", "roles/logging.logWriter"])
@@ -556,6 +575,18 @@ resource "google_cloud_run_v2_service" "connector" {
         for_each = var.data_bucket == null ? [] : [var.data_bucket]
         content {
           name  = "MILOS_DATA_BUCKET"
+          value = env.value
+        }
+      }
+
+      # BigQuery tools: the data project and, per agent, the identity to impersonate.
+      dynamic "env" {
+        for_each = var.data_project == null ? {} : {
+          MILOS_DATA_PROJECT  = var.data_project
+          MILOS_WORKSPACE_SAS = jsonencode({ for id, sa in google_service_account.workspace : id => sa.email })
+        }
+        content {
+          name  = env.key
           value = env.value
         }
       }

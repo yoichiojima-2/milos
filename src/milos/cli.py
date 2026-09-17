@@ -19,7 +19,17 @@ import httpx
 
 from .client import ApiError, Client
 from .errors import Invalid, MilosError
-from .models import AgentVersion, Event, EventType, Published, SessionStatus, SessionView, StopReason, Verdict
+from .models import (
+    AgentVersion,
+    Event,
+    EventType,
+    Published,
+    SessionStatus,
+    SessionView,
+    StopReason,
+    Verdict,
+    workspace_dataset,
+)
 
 
 def _load_dotenv(path: str = ".env") -> None:
@@ -99,8 +109,14 @@ COLUMNS: tuple[tuple[str, Callable[[Published], str]], ...] = (
     ("Data classes", lambda p: ", ".join(p.version.data_classes)),
     ("Tools", lambda p: ", ".join(p.version.allowed_tools)),
     ("Needs approval", lambda p: ", ".join(p.version.approval_required) or "—"),
+    ("BigQuery", lambda p: ", ".join(_bigquery(p.version)) or "—"),
     ("Runner SA", lambda p: p.version.runner_sa),
 )
+
+
+def _bigquery(version: AgentVersion) -> list[str]:
+    """What the agent reaches in BigQuery: the shared datasets and its workspace."""
+    return [*version.datasets, *([workspace_dataset(version.agent_id) + " (workspace)"] if version.workspace else [])]
 
 
 def registry(published: list[Published]) -> str:
