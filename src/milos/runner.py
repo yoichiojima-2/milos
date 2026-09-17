@@ -15,7 +15,8 @@ the hook decides, never the model and never the SDK's own permission mode.
 
 Web tools are disabled; the web is reached through a connector where the
 request is checked and logged. `setting_sources=[]` keeps repository settings,
-hooks and skills out: the definition's system prompt is the only instruction.
+hooks and skills out: the definition's system prompt, when it has one, is the
+only instruction.
 """
 
 import asyncio

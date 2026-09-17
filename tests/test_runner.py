@@ -17,6 +17,7 @@ from milos.models import EventType, SessionStatus, StopReason, Verdict
 from milos.runner import Run, continuation
 from milos.settings import RunnerSettings
 
+from .conftest import definition
 from .fakes import FakeBlobs
 
 # --- a scripted stand-in for ClaudeSDKClient -------------------------------------
@@ -155,8 +156,18 @@ async def test_plain_turn_reports_messages_and_finishes(service, tokens, session
     options = client.options
     assert options.setting_sources == [] and "WebFetch" in options.disallowed_tools
     assert options.max_turns == 20 and options.max_budget_usd == 5.0
+    assert options.system_prompt == "You are a careful analyst."
     assert options.env["CLAUDE_CODE_USE_VERTEX"] == "1"
     assert list(options.mcp_servers) == ["egress"]  # the definition's connectors, from connector_urls
+
+
+async def test_definition_without_system_prompt_runs_on_the_sdk_default(service, tokens, sdk, blobs, tmp_path, monkeypatch):
+    await service.publish(definition(system_prompt=None))
+    session = await service.create_session("analyst", "hello", operator="alice@example.com", client_request_id="req-2")
+    sdk.script = Script(reply="done")
+    run = make_run(service, tokens, session, sdk, blobs, tmp_path, monkeypatch)
+    assert await run() == StopReason.END_TURN
+    assert sdk.instances[0].options.system_prompt is None
 
 
 async def test_denied_tool_never_runs(service, tokens, session, sdk, blobs, tmp_path, monkeypatch):

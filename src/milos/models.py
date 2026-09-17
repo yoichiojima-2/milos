@@ -163,7 +163,7 @@ class AgentVersion(Document):
     max_concurrent_sessions: int = Field(gt=0)
     model: str  # Vertex AI model id
     runner_sa: str  # the agent's dedicated runner service account
-    system_prompt: str
+    system_prompt: str | None = None  # optional; without it the SDK runs on its own default prompt
     connectors: list[str] = Field(default_factory=list)  # MCP connector names mounted
     datasets: list[str] = Field(default_factory=list)  # shared BigQuery datasets in the class's data project the agent may read
     workspace: bool = False  # a BigQuery dataset of its own (`agent_<id>`) the agent reads and writes

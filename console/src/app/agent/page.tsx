@@ -97,16 +97,18 @@ function AgentInner() {
           </dl>
         </CardContent>
       </Card>
-      <Card className="max-w-3xl">
-        <CardHeader>
-          <CardTitle>System prompt</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <pre className="font-mono text-xs whitespace-pre-wrap text-muted-foreground [overflow-wrap:break-word]">
-            {v.system_prompt}
-          </pre>
-        </CardContent>
-      </Card>
+      {v.system_prompt && (
+        <Card className="max-w-3xl">
+          <CardHeader>
+            <CardTitle>System prompt</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="font-mono text-xs whitespace-pre-wrap text-muted-foreground [overflow-wrap:break-word]">
+              {v.system_prompt}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
