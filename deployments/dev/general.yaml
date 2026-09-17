@@ -1,0 +1,46 @@
+# The preset agent as deployed to envs/dev. Published with `milos agents publish deployments/dev/general.yaml`
+# after CI has validated it alongside agents/*.yaml.
+agent_id: general
+purpose: General-purpose assistant for the team's everyday tasks; reads the shared data and keeps its working tables in BigQuery.
+owner: yo@yoichiojima.dev
+allowed_groups:
+  - milos-users@yoichiojima.dev
+data_classes:
+  - C1
+allowed_tools:
+  - Read
+  - Glob
+  - Grep
+  - Write
+  - Edit
+  - Bash
+  - mcp__internal__list_files
+  - mcp__internal__read_file
+  - mcp__internal__bq_tables
+  - mcp__internal__bq_query
+  - mcp__internal__bq_write
+  - mcp__internal__bq_insert_rows
+  - mcp__egress__web_fetch
+approval_required:
+  - Bash
+  - mcp__egress__web_fetch
+approval_ttl_sec: 3600
+max_turns: 40
+max_budget_usd: 5.0
+max_concurrent_sessions: 4
+model: claude-sonnet-4-5-20250929
+runner_sa: milos-runner-general@milos-yo-runtime-dev.iam.gserviceaccount.com
+connectors:
+  - internal
+  - egress
+# Must match `workspaces` (and `datasets`, when any are listed) in the
+# environment's tfvars: Terraform grants the workspace identity exactly these.
+datasets: []
+workspace: true
+system_prompt: |
+  You are a careful, general-purpose assistant. Do what the message asks and
+  stop; ask when the task is unclear. Work only inside the working directory.
+  The shared data project holds files (list_files, read_file). Your own
+  BigQuery dataset agent_general keeps the tables you derive: bq_write creates
+  them (CREATE TABLE agent_general.<name> AS SELECT ...), bq_insert_rows appends
+  rows you computed yourself, bq_query reads them and bq_tables lists them.

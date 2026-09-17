@@ -12,13 +12,13 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def test_example_definition_is_valid():
-    version = AgentVersion.from_yaml(REPO / "agents" / "analyst.yaml")
-    assert version.agent_id == "analyst" and len(version.definition_sha256) == 64
-    assert DataScope.of(version) == DataScope(agent_id="analyst", datasets=["weekly_numbers"], workspace="agent_analyst")
+    version = AgentVersion.from_yaml(REPO / "agents" / "general.yaml")
+    assert version.agent_id == "general" and len(version.definition_sha256) == 64
+    assert DataScope.of(version) == DataScope(agent_id="general", datasets=["weekly_numbers"], workspace="agent_general")
 
 
 def write(tmp_path: Path, **overrides) -> Path:
-    data = yaml.safe_load((REPO / "agents" / "analyst.yaml").read_text())
+    data = yaml.safe_load((REPO / "agents" / "general.yaml").read_text())
     data.update(overrides)
     path = tmp_path / "agent.yaml"
     path.write_text(yaml.safe_dump(data))
@@ -33,7 +33,7 @@ def write(tmp_path: Path, **overrides) -> Path:
         ({"max_budget_usd": 0}, "greater than 0"),
         ({"allowed_groups": []}, "at least one group"),
         ({"allowed_tools": ["WebFetch"]}, "connector"),
-        ({"approval_required": ["Edit"]}, "not in allowed_tools"),
+        ({"approval_required": ["NotebookEdit"]}, "not in allowed_tools"),
         ({"connectors": []}, "needs connector"),
         ({"owner": "nobody"}, "email"),
         ({"unexpected": 1}, "unexpected"),

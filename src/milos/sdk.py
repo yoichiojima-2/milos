@@ -2,10 +2,10 @@
 
 A script drives a milos session the way it would drive `claude_agent_sdk`:
 
-    async for message in query(prompt="Summarise last week.", options=MilosOptions(agent="analyst")):
+    async for message in query(prompt="Summarise last week.", options=MilosOptions(agent="general")):
         ...
 
-    async with MilosClient(MilosOptions(agent="analyst")) as client:
+    async with MilosClient(MilosOptions(agent="general")) as client:
         await client.query("Summarise last week.")
         async for message in client.receive_response():
             ...

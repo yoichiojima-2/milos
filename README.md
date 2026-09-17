@@ -27,25 +27,27 @@ The full design is in [docs/design.md](docs/design.md); how it maps to ISO/IEC 2
 An agent is a YAML definition in Git. CI validates it; only validated definitions are published, as immutable versions. The definition names the purpose, the owner, who may start it, which data classes it touches, which tools it may use and which of those need a person, its limits, its model, its runner identity, and the BigQuery datasets it reads and the workspace dataset it may write. The registry of what is deployed is generated from the published versions (`milos agents registry`), never written by hand.
 
 ```yaml
-agent_id: analyst
-purpose: Summarise the weekly numbers into a short report.
+agent_id: general
+purpose: General-purpose assistant for the team's everyday tasks.
 owner: owner@example.com
-allowed_groups: [analysts@example.com]
+allowed_groups: [agent-users@example.com]
 data_classes: [C1]
-allowed_tools: [Read, Glob, Grep, Write, Bash, mcp__internal__bq_query, mcp__internal__bq_write, mcp__egress__web_fetch]
+allowed_tools: [Read, Glob, Grep, Write, Edit, Bash, mcp__internal__bq_query, mcp__internal__bq_write, mcp__egress__web_fetch]
 approval_required: [Bash, mcp__egress__web_fetch]
 approval_ttl_sec: 3600
 max_turns: 40
 max_budget_usd: 5.0
-max_concurrent_sessions: 2
+max_concurrent_sessions: 4
 model: claude-sonnet-5@20260601
-runner_sa: milos-runner-analyst@milos-runtime-dev.iam.gserviceaccount.com
+runner_sa: milos-runner-general@milos-runtime-dev.iam.gserviceaccount.com
 connectors: [internal, egress]
 datasets: [weekly_numbers]   # shared BigQuery datasets it may read
-workspace: true              # a dataset of its own, agent_analyst, to read and write
+workspace: true              # a dataset of its own, agent_general, to read and write
 system_prompt: |
-  You are a careful analyst. Work only inside the working directory.
+  You are a careful, general-purpose assistant. Work only inside the working directory.
 ```
+
+`agents/general.yaml` is the preset: one general assistant a team can start with. A narrower agent is another file with a smaller tool list and its own identity.
 
 BigQuery is reached through the internal connector, never from the sandbox. The connector impersonates the agent's workspace identity, which IAM limits to the datasets above, dry-runs every statement and refuses one that reaches outside, and labels every job with the session so BigQuery's audit log joins the journal.
 
@@ -54,7 +56,7 @@ BigQuery is reached through the internal connector, never from the sandbox. The 
 ```sh
 milos agents list                       # what you may run, and which tools pause for approval
 milos agents publish deployments/dev/*.yaml   # admin group: validate locally, publish through the API
-milos run analyst "Summarise last week's numbers." --approver lead@example.com
+milos run general "Summarise last week's numbers." --approver lead@example.com
 milos pending                           # as the approver: waiting calls with their arguments
 milos allow                             # decide; ids are needed only when several calls wait
 milos sessions                          # status, stop reason, pending tool calls
@@ -73,7 +75,7 @@ From Python the same session has the shape of the [Claude Agent SDK](https://cod
 ```python
 from milos import MilosOptions, PermissionResultAllow, query
 
-options = MilosOptions(agent="analyst", approvers=["lead@example.com"])
+options = MilosOptions(agent="general", approvers=["lead@example.com"])
 async for message in query("Summarise last week's numbers.", options):
     print(message)
 ```

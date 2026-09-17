@@ -81,7 +81,7 @@ An API without GCP, against the Firestore emulator:
 gcloud emulators firestore start --host-port=localhost:8080 &
 MILOS_DEV_USER=you@example.com MILOS_TOKEN_KEY=dev MILOS_PROJECT=local \
 FIRESTORE_EMULATOR_HOST=localhost:8080 uv run milos serve api --port 8080
-MILOS_API_URL=http://localhost:8080 MILOS_ID_TOKEN=x uv run milos run analyst "hello"
+MILOS_API_URL=http://localhost:8080 MILOS_ID_TOKEN=x uv run milos run general "hello"
 ```
 
 With `MILOS_DEV_USER` set, the API trusts that email, treats it as a member of every group including the admin group, logs audit entries to stderr, and creates sessions without launching jobs. Each new session prints the environment a runner job would receive, tokens included, to the API's stderr; export it (with `MILOS_INTERNAL_API_URL` pointing at an API started with `MILOS_API_ROLE=internal`) and `uv run python -m milos.runner` to run one by hand. `FIRESTORE_EMULATOR_HOST=localhost:8080 uv run pytest -m emulator` runs the store's own tests against the emulator.
