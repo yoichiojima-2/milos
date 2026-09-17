@@ -22,6 +22,7 @@ session until a person records an *approval* with a `Verdict`.
 import fnmatch
 import hashlib
 import json
+import re
 import secrets
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -97,6 +98,21 @@ FORBIDDEN_TOOLS = ("WebFetch", "WebSearch")
 # The SDK's own tools an agent may be granted; anything else must be an MCP
 # tool exposed by a connector (`mcp__<connector>__<tool>`).
 SDK_TOOLS = ("Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "NotebookEdit", "Task")
+# The internal connector's BigQuery tools. They reach only what the definition
+# declares: `datasets` (read) and the agent's `workspace` (read and write).
+BIGQUERY_TOOLS = (
+    "mcp__internal__bq_tables",
+    "mcp__internal__bq_query",
+    "mcp__internal__bq_write",
+    "mcp__internal__bq_insert_rows",
+)
+BIGQUERY_WRITE_TOOLS = ("mcp__internal__bq_write", "mcp__internal__bq_insert_rows")
+DATASET_ID = re.compile(r"^[A-Za-z0-9_]{1,1024}$")
+
+
+def workspace_dataset(agent_id: str) -> str:
+    """The agent's own BigQuery dataset, as `infra/modules/data` names it: `agent_<id>`, hyphens folded to underscores."""
+    return "agent_" + agent_id.replace("-", "_")
 
 
 def _problem(error: Any) -> str:
@@ -149,6 +165,8 @@ class AgentVersion(Document):
     runner_sa: str  # the agent's dedicated runner service account
     system_prompt: str
     connectors: list[str] = Field(default_factory=list)  # MCP connector names mounted
+    datasets: list[str] = Field(default_factory=list)  # shared BigQuery datasets in the class's data project the agent may read
+    workspace: bool = False  # a BigQuery dataset of its own (`agent_<id>`) the agent reads and writes
     published_at: datetime
 
     @field_validator("purpose")
@@ -169,6 +187,14 @@ class AgentVersion(Document):
         if not value.endswith(".iam.gserviceaccount.com"):
             raise ValueError("must be a service account email")
         return value
+
+    @field_validator("datasets")
+    @classmethod
+    def _datasets_are_ids(cls, datasets: list[str]) -> list[str]:
+        bad = [d for d in datasets if not DATASET_ID.match(d)]
+        if bad:
+            raise ValueError("must be plain dataset ids (letters, digits, underscores): " + ", ".join(bad))
+        return datasets
 
     @field_validator("allowed_tools")
     @classmethod
@@ -197,6 +223,10 @@ class AgentVersion(Document):
                 connector = name if separator else ""
                 if connector not in self.connectors:
                     problems.append(f"{tool} needs connector {connector!r} in connectors")
+            if tool in BIGQUERY_TOOLS and not (self.workspace or self.datasets):
+                problems.append(f"{tool} needs a workspace or datasets to reach")
+            if tool in BIGQUERY_WRITE_TOOLS and not self.workspace:
+                problems.append(f"{tool} writes; it needs workspace: true")
         if problems:
             raise ValueError("; ".join(problems))
         return self
@@ -437,11 +467,32 @@ class PermissionAnswer(Wire):
     approval_tool_use_id: str | None = None  # the approval an allow consumed
 
 
+class DataScope(Wire):
+    """What a permitted call may reach in BigQuery, from the definition pinned to the session.
+
+    The connector impersonates the agent's workspace identity, which IAM limits
+    to these datasets; the names let it refuse a statement before it runs.
+    """
+
+    agent_id: str
+    datasets: list[str]  # readable shared datasets
+    workspace: str | None  # the agent's own dataset, readable and writable
+
+    @classmethod
+    def of(cls, version: AgentVersion) -> "DataScope":
+        workspace = workspace_dataset(version.agent_id) if version.workspace else None
+        return cls(agent_id=version.agent_id, datasets=list(version.datasets), workspace=workspace)
+
+    def readable(self) -> frozenset[str]:
+        return frozenset([*self.datasets, *([self.workspace] if self.workspace else [])])
+
+
 class PermissionLookup(Wire):
-    """A connector's check: is this exact call permitted under the current lease?"""
+    """A connector's check: is this exact call permitted under the current lease, and what may it reach?"""
 
     permitted: bool
     tool_use_id: str | None = None
+    scope: DataScope | None = None  # set when permitted
 
 
 class RunnerEvent(Wire):

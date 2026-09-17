@@ -54,6 +54,7 @@ function AgentInner() {
     ["limits", `${v.max_turns} turns · $${v.max_budget_usd} · ${v.max_concurrent_sessions} concurrent`],
     ["model", v.model],
     ["connectors", v.connectors.join(", ") || "—"],
+    ["bigquery", [...v.datasets, ...(v.workspace ? [`agent_${v.agent_id.replace(/-/g, "_")} (workspace)`] : [])].join(", ") || "—"],
     ["runner identity", v.runner_sa],
     ["definition sha256", v.definition_sha256],
     ["published", clockTime(epoch(v.published_at))],

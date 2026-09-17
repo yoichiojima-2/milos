@@ -35,6 +35,7 @@ variable "restricted_services" {
     "artifactregistry.googleapis.com",
     "logging.googleapis.com",
     "bigquery.googleapis.com",
+    "iamcredentials.googleapis.com",
     "cloudscheduler.googleapis.com",
   ]
 }

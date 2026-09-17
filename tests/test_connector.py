@@ -7,16 +7,25 @@ import pytest
 
 from milos import connector
 from milos.errors import Forbidden
+from milos.models import DataScope, PermissionLookup
+from milos.warehouse import Plan, Table, TableInfo
+
+from .fakes import FakeWarehouse
+
+SCOPE = DataScope(agent_id="analyst", datasets=["weekly_numbers"], workspace="agent_analyst")
 
 
 class Check:
-    def __init__(self, allow: bool) -> None:
+    def __init__(self, allow: bool, scope: DataScope | None = None) -> None:
         self.allow = allow
+        self.scope = scope
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
 
-    async def permitted(self, session_token: str, tool_name: str, args: dict[str, Any]) -> bool:
+    async def permitted(self, session_token: str, tool_name: str, args: dict[str, Any]) -> PermissionLookup:
         self.calls.append((session_token, tool_name, args))
-        return self.allow
+        if not self.allow:
+            return PermissionLookup(permitted=False)
+        return PermissionLookup(permitted=True, tool_use_id="toolu_01ABC", scope=self.scope)
 
 
 class Ctx:
@@ -91,7 +100,8 @@ async def test_api_permission_check_calls_internal_api():
 
     check = connector.ApiPermissionCheck("http://internal")
     check._http = httpx.AsyncClient(base_url="http://internal", transport=httpx.MockTransport(handler))
-    assert await check.permitted("sess_1.sig", "mcp__egress__web_fetch", {"url": "https://x"}) is True
+    found = await check.permitted("sess_1.sig", "mcp__egress__web_fetch", {"url": "https://x"})
+    assert found == PermissionLookup(permitted=True, tool_use_id="t1")
     assert seen["path"] == "/internal/sessions/sess_1/permissions"
     assert seen["params"]["tool_name"] == "mcp__egress__web_fetch" and seen["session"] == "sess_1.sig"
 
@@ -173,3 +183,117 @@ async def test_internal_data_tools_read_only_inside_the_bucket():
 
 def test_internal_without_a_bucket_has_no_tools():
     assert connector.internal(Check(allow=True)).mcp._tool_manager.list_tools() == []
+
+
+# --- BigQuery ------------------------------------------------------------------------
+
+
+def table(dataset: str, name: str = "t", project: str = "data") -> Table:
+    return Table(project=project, dataset=dataset, table=name)
+
+
+def plan(kind: str = "SELECT", reads: tuple[Table, ...] = (), writes: tuple[Table, ...] = (), size: int = 10) -> Plan:
+    return Plan(statement_type=kind, reads=reads, writes=writes, bytes=size)
+
+
+PLANS = {
+    "select shared": plan(reads=(table("weekly_numbers"), table("agent_analyst", "notes"))),
+    "select other agent": plan(reads=(table("agent_other"),)),
+    "select other project": plan(reads=(table("weekly_numbers", project="elsewhere"),)),
+    "select into": plan(reads=(table("weekly_numbers"),), writes=(table("agent_analyst"),)),
+    "select too much": plan(reads=(table("weekly_numbers"),), size=10**12),
+    "insert via query": plan("INSERT", reads=(table("agent_analyst"),), writes=(table("agent_analyst"),)),
+    "ctas": plan("CREATE_TABLE_AS_SELECT", reads=(table("weekly_numbers"),), writes=(table("agent_analyst", "summary"),)),
+    "ctas into shared": plan("CREATE_TABLE_AS_SELECT", reads=(table("weekly_numbers"),), writes=(table("weekly_numbers"),)),
+    "drop": plan("DROP_TABLE", writes=(table("agent_analyst", "summary"),)),
+    "script": plan("SCRIPT"),
+    "create schema": plan("CREATE_SCHEMA"),
+    "alter expiration_timestamp": plan("ALTER_TABLE", writes=(table("agent_analyst"),)),
+}
+
+
+def bigquery(scope: DataScope | None = SCOPE, **kwargs: Any):
+    warehouse = FakeWarehouse(plans=PLANS, **kwargs)
+    c = connector.internal(Check(allow=True, scope=scope), warehouse=warehouse)
+    return warehouse, c.mcp._tool_manager, Ctx({"x-milos-session": "sess_1.sig"})
+
+
+def test_bigquery_tools_hide_the_grant_from_their_schema():
+    _, tools, _ = bigquery()
+    assert sorted(t.name for t in tools.list_tools()) == ["bq_insert_rows", "bq_query", "bq_tables", "bq_write"]
+    assert set(tools.get_tool("bq_query").parameters["properties"]) == {"sql"}
+
+
+async def test_bq_query_runs_only_selects_inside_the_scope():
+    warehouse, tools, ctx = bigquery(rows=[{"week": "2026-W36", "revenue": 10}])
+    query = tools.get_tool("bq_query").fn
+
+    result = await query(ctx, sql="select shared")
+    assert result == {"rows": [{"week": "2026-W36", "revenue": 10}], "row_count": 1, "truncated": False, "bytes_processed": 10}
+    assert warehouse.jobs[0]["agent_id"] == "analyst"
+    assert warehouse.jobs[0]["labels"] == {"milos_session": "sess_1", "milos_tool_use": "toolu_01abc", "milos_agent": "analyst"}
+
+    for sql in ("select other agent", "select other project", "select into", "select too much", "insert via query", "script"):
+        with pytest.raises(Forbidden):
+            await query(ctx, sql=sql)
+    assert len(warehouse.jobs) == 1  # a refused statement never runs
+
+
+async def test_bq_query_bounds_what_comes_back():
+    rows = [{"n": i} for i in range(2000)]
+    warehouse, tools, ctx = bigquery(rows=rows)
+    result = await tools.get_tool("bq_query").fn(ctx, sql="select shared")
+    assert result["row_count"] == 1000 and result["truncated"] is True
+
+    kept, cut = connector.bounded_rows([{"text": "x" * 100} for _ in range(10)], limit=500)
+    assert cut and 0 < len(kept) < 10
+
+
+async def test_bq_write_targets_only_the_workspace():
+    warehouse, tools, ctx = bigquery()
+    write = tools.get_tool("bq_write").fn
+
+    assert await write(ctx, sql="ctas") == {"statement": "CREATE_TABLE_AS_SELECT", "affected_rows": 0, "bytes_processed": 10}
+    assert await write(ctx, sql="drop") == {"statement": "DROP_TABLE", "affected_rows": 0, "bytes_processed": 10}
+    for sql in ("ctas into shared", "select shared", "script", "create schema", "alter expiration_timestamp", " "):
+        with pytest.raises(Forbidden):
+            await write(ctx, sql=sql)
+    assert [j["sql"] for j in warehouse.jobs] == ["ctas", "drop"]
+
+
+async def test_bq_insert_rows_appends_inside_the_workspace():
+    warehouse, tools, ctx = bigquery()
+    insert = tools.get_tool("bq_insert_rows").fn
+    rows = [{"week": "2026-W36", "revenue": 10}]
+
+    assert await insert(ctx, table="weekly", rows=rows) == {"table": "data.agent_analyst.weekly", "inserted_rows": 1}
+    assert warehouse.loads[0]["table"] == Table(project="data", dataset="agent_analyst", table="weekly")
+    with pytest.raises(Forbidden):
+        await insert(ctx, table="weekly_numbers.sales", rows=rows)
+    with pytest.raises(Forbidden):
+        await insert(ctx, table="weekly", rows=[])
+    with pytest.raises(Forbidden):
+        await insert(ctx, table="weekly", rows=rows * 1001)
+    assert len(warehouse.loads) == 1
+
+
+async def test_bq_tables_lists_reachable_datasets_only():
+    listing = {"weekly_numbers": [TableInfo(table="sales", rows=52, columns=["week STRING", "revenue INTEGER"])]}
+    _, tools, ctx = bigquery(tables=listing)
+    found = await tools.get_tool("bq_tables").fn(ctx, dataset="weekly_numbers")
+    assert found == [{"table": "sales", "rows": 52, "columns": ["week STRING", "revenue INTEGER"]}]
+    with pytest.raises(Forbidden):
+        await tools.get_tool("bq_tables").fn(ctx, dataset="agent_other")
+
+
+async def test_bigquery_tools_without_a_scope_are_refused():
+    warehouse, tools, ctx = bigquery(scope=None)
+    with pytest.raises(Forbidden):
+        await tools.get_tool("bq_query").fn(ctx, sql="select shared")
+    read_only = DataScope(agent_id="analyst", datasets=["weekly_numbers"], workspace=None)
+    warehouse, tools, ctx = bigquery(scope=read_only)
+    with pytest.raises(Forbidden):
+        await tools.get_tool("bq_insert_rows").fn(ctx, table="t", rows=[{"a": 1}])
+    with pytest.raises(Forbidden):
+        await tools.get_tool("bq_write").fn(ctx, sql="ctas")
+    assert warehouse.jobs == [] and warehouse.loads == []

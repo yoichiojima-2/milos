@@ -32,3 +32,13 @@ output "build_service_account" {
 output "build_source_bucket" {
   value = module.runtime.build_source_bucket
 }
+
+output "workspace_service_accounts" {
+  description = "Agent id -> the identity its BigQuery jobs run as."
+  value       = module.runtime.workspace_service_accounts
+}
+
+output "workspace_datasets" {
+  description = "Agent id -> its BigQuery workspace dataset."
+  value       = module.data.workspace_datasets
+}

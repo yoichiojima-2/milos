@@ -11,14 +11,21 @@ connector act.
 `web_fetch` is the reference tool: GET only, https only, public addresses
 only, a bounded number of redirects, a bounded response, every URL journaled
 through the permission it consumed.
+
+The internal connector's BigQuery tools take the `Grant` the check returned:
+the API's answer names the session, the tool use and the datasets the
+definition lets the agent reach, and `warehouse.py` refuses anything outside.
 """
 
 import asyncio
 import inspect
 import ipaddress
+import json
 import logging
+import re
 import socket
 from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass
 from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
@@ -27,8 +34,9 @@ from mcp.server.mcpserver import Context, MCPServer
 
 from .errors import Forbidden
 from .http import Api, ApiError, GoogleIdentity, Identity
-from .models import PermissionLookup, sha256_json
+from .models import DataScope, PermissionLookup, sha256_json
 from .settings import MCP_PATH, ConnectorSettings
+from .warehouse import MAX_ROWS, BigQueryWarehouse, Table, Warehouse, check_plan, check_sql, label
 
 MAX_URL_LENGTH = 2048
 MAX_REDIRECTS = 3
@@ -38,7 +46,16 @@ log = logging.getLogger(__name__)
 
 
 class PermissionCheck(Protocol):
-    async def permitted(self, session_token: str, tool_name: str, args: dict[str, Any]) -> bool: ...
+    async def permitted(self, session_token: str, tool_name: str, args: dict[str, Any]) -> PermissionLookup: ...
+
+
+@dataclass(frozen=True, slots=True)
+class Grant:
+    """The permission the API found for one call: whose it is, and what it may reach."""
+
+    session_id: str
+    tool_use_id: str
+    scope: DataScope | None
 
 
 class ApiPermissionCheck(Api):
@@ -47,10 +64,10 @@ class ApiPermissionCheck(Api):
     def __init__(self, api_url: str, *, identity: Identity | None = None) -> None:
         super().__init__(api_url, prefix="/internal/sessions", identity=identity, timeout=15)
 
-    async def permitted(self, session_token: str, tool_name: str, args: dict[str, Any]) -> bool:
+    async def permitted(self, session_token: str, tool_name: str, args: dict[str, Any]) -> PermissionLookup:
         session_id = session_token.rsplit(".", 1)[0]
         try:
-            found = await self.one(
+            return await self.one(
                 PermissionLookup,
                 "GET",
                 f"/{session_id}/permissions",
@@ -59,8 +76,7 @@ class ApiPermissionCheck(Api):
             )
         except ApiError as error:
             log.warning("permission check for %s in %s failed: %s", tool_name, session_id, error)
-            return False
-        return found.permitted
+            return PermissionLookup(permitted=False)
 
 
 class Connector:
@@ -70,21 +86,31 @@ class Connector:
         self.mcp = MCPServer(name)
 
     def tool(self, fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-        """Register an async tool; the permission check runs before its body."""
+        """Register an async tool; the permission check runs before its body.
+
+        A tool with a keyword-only `grant` parameter receives the permission
+        the API found; the parameter is not part of the tool's schema.
+        """
         tool_name = f"mcp__{self.name}__{fn.__name__}"
+        params = list(inspect.signature(fn).parameters.values())
+        wants_grant = any(p.name == "grant" for p in params)
 
         async def guarded(ctx: Context, **kwargs: Any) -> Any:
             session_token = (ctx.headers or {}).get("x-milos-session", "")
-            if not session_token or not await self.check.permitted(session_token, tool_name, kwargs):
+            found = await self.check.permitted(session_token, tool_name, kwargs) if session_token else None
+            if not (found and found.permitted):
                 raise Forbidden(f"{tool_name} was not permitted for this call")
+            if wants_grant:
+                session_id = session_token.rsplit(".", 1)[0]
+                kwargs["grant"] = Grant(session_id=session_id, tool_use_id=found.tool_use_id or "", scope=found.scope)
             return await fn(**kwargs)
 
         # The server derives the tool's schema from the signature: expose the
         # real parameters plus the context it injects.
         ctx_param = inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY, annotation=Context)
-        params = list(inspect.signature(fn).parameters.values())
-        cast(Any, guarded).__signature__ = inspect.Signature([*params, ctx_param])
-        guarded.__annotations__ = {**fn.__annotations__, "ctx": Context}
+        exposed = [p for p in params if p.name != "grant"]
+        cast(Any, guarded).__signature__ = inspect.Signature([*exposed, ctx_param])
+        guarded.__annotations__ = {k: v for k, v in fn.__annotations__.items() if k != "grant"} | {"ctx": Context}
         guarded.__name__ = fn.__name__
         guarded.__doc__ = fn.__doc__
         self.mcp.tool(name=fn.__name__, description=fn.__doc__ or fn.__name__)(guarded)
@@ -186,12 +212,20 @@ def check_path(path: str) -> str:
     return path
 
 
-def internal(check: PermissionCheck, *, data: DataFiles | None = None) -> Connector:
-    """Read-only tools over the approved data bucket. Without a bucket the connector has no tools."""
-    connector = Connector("internal", check)
-    if data is None:
-        return connector
+def internal(check: PermissionCheck, *, data: DataFiles | None = None, warehouse: Warehouse | None = None) -> Connector:
+    """Tools over the approved data: read-only files from the bucket, and BigQuery within the definition's scope.
 
+    Without a bucket there are no file tools; without a warehouse no BigQuery tools.
+    """
+    connector = Connector("internal", check)
+    if data is not None:
+        _file_tools(connector, data)
+    if warehouse is not None:
+        _bigquery_tools(connector, warehouse)
+    return connector
+
+
+def _file_tools(connector: Connector, data: DataFiles) -> None:
     @connector.tool
     async def list_files(prefix: str = "") -> list[str]:
         """List files in the shared data project under a prefix (at most 200)."""
@@ -205,7 +239,86 @@ def internal(check: PermissionCheck, *, data: DataFiles | None = None) -> Connec
             raise Forbidden(f"no such file: {path}")
         return body.decode("utf-8", errors="replace")
 
-    return connector
+
+# --- the internal connector's BigQuery tools ------------------------------------------
+
+MAX_RESULT_BYTES = 200_000
+MAX_INSERT_ROWS = 1_000
+MAX_INSERT_BYTES = 1_000_000
+TABLE_ID = re.compile(r"^[A-Za-z0-9_]{1,1024}$")
+
+
+def _scope(grant: Grant) -> DataScope:
+    if grant.scope is None:
+        raise Forbidden("the definition names no datasets and no workspace")
+    return grant.scope
+
+
+def _labels(grant: Grant) -> dict[str, str]:
+    """Job labels that tie BigQuery's audit log to the journal."""
+    scope = _scope(grant)
+    return {
+        "milos_session": label(grant.session_id),
+        "milos_tool_use": label(grant.tool_use_id),
+        "milos_agent": label(scope.agent_id),
+    }
+
+
+def bounded_rows(rows: list[dict[str, Any]], limit: int = MAX_RESULT_BYTES) -> tuple[list[dict[str, Any]], bool]:
+    """As many leading rows as fit in `limit` bytes of JSON, and whether any were dropped."""
+    kept: list[dict[str, Any]] = []
+    size = 2
+    for row in rows:
+        size += len(json.dumps(row, separators=(",", ":"))) + 1
+        if size > limit:
+            return kept, True
+        kept.append(row)
+    return kept, False
+
+
+def _bigquery_tools(connector: Connector, warehouse: Warehouse) -> None:
+    project = warehouse.project
+
+    @connector.tool
+    async def bq_tables(dataset: str, *, grant: Grant) -> list[dict[str, Any]]:
+        """List the tables of one BigQuery dataset the agent may reach, with columns and row counts."""
+        scope = _scope(grant)
+        if dataset not in scope.readable():
+            raise Forbidden(f"{dataset} is outside the agent's datasets")
+        return [asdict(t) for t in await warehouse.tables(scope.agent_id, dataset)]
+
+    @connector.tool
+    async def bq_query(sql: str, *, grant: Grant) -> dict[str, Any]:
+        """Run one SELECT over the agent's datasets and workspace. Name tables as dataset.table; at most 1000 rows / 200 kB come back."""
+        scope = _scope(grant)
+        check_plan(await warehouse.plan(scope.agent_id, check_sql(sql)), scope, project, write=False)
+        result = await warehouse.run(scope.agent_id, sql, labels=_labels(grant), max_rows=MAX_ROWS)
+        rows, cut = bounded_rows(result.rows)
+        return {"rows": rows, "row_count": len(rows), "truncated": result.truncated or cut, "bytes_processed": result.bytes}
+
+    @connector.tool
+    async def bq_write(sql: str, *, grant: Grant) -> dict[str, Any]:
+        """Run one statement that creates, fills, changes or drops a table in the agent's workspace dataset (CREATE TABLE AS SELECT, INSERT, MERGE, DELETE, DROP TABLE, ...)."""
+        scope = _scope(grant)
+        plan = check_plan(await warehouse.plan(scope.agent_id, check_sql(sql, write=True)), scope, project, write=True)
+        result = await warehouse.run(scope.agent_id, sql, labels=_labels(grant), max_rows=0)
+        return {"statement": plan.statement_type, "affected_rows": result.affected, "bytes_processed": result.bytes}
+
+    @connector.tool
+    async def bq_insert_rows(table: str, rows: list[dict[str, Any]], *, grant: Grant) -> dict[str, Any]:
+        """Append rows (JSON objects, at most 1000 per call) to a table in the workspace, creating it from their shape when it does not exist."""
+        scope = _scope(grant)
+        if not scope.workspace:
+            raise Forbidden("the definition has no workspace")
+        if not TABLE_ID.match(table):
+            raise Forbidden("table is a plain table name inside the workspace")
+        if not rows or len(rows) > MAX_INSERT_ROWS:
+            raise Forbidden(f"between 1 and {MAX_INSERT_ROWS} rows per call")
+        if len(json.dumps(rows, separators=(",", ":"))) > MAX_INSERT_BYTES:
+            raise Forbidden(f"rows exceed {MAX_INSERT_BYTES} bytes")
+        target = Table(project=project, dataset=scope.workspace, table=table)
+        loaded = await warehouse.load(scope.agent_id, target, rows, labels=_labels(grant))
+        return {"table": str(target), "inserted_rows": loaded}
 
 
 def build_from_env(name: str) -> Any:
@@ -214,4 +327,5 @@ def build_from_env(name: str) -> Any:
     if name == "egress":
         return egress(check).app()
     data = GcsDataFiles(settings.data_bucket) if settings.data_bucket else None
-    return internal(check, data=data).app()
+    warehouse = BigQueryWarehouse(settings.data_project, settings.workspace_service_accounts) if settings.data_project else None
+    return internal(check, data=data, warehouse=warehouse).app()

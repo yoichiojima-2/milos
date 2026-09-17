@@ -10,6 +10,7 @@ dependencies = [
     "claude-agent-sdk>=0.2",
     "fastapi>=0.115",
     "google-auth>=2.35",
+    "google-cloud-bigquery>=3.45.1",
     "google-cloud-firestore>=2.19",
     "google-cloud-logging>=3.11",
     "google-cloud-run>=0.10",

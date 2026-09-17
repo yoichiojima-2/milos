@@ -43,6 +43,7 @@ from .models import (
     Agent,
     AgentVersion,
     Approval,
+    DataScope,
     Document,
     Event,
     EventType,
@@ -52,6 +53,7 @@ from .models import (
     PendingCall,
     Permission,
     PermissionAnswer,
+    PermissionLookup,
     Polled,
     Request,
     RunnerEvent,
@@ -550,11 +552,16 @@ class Service:
 
         return await self._commit(fn)
 
-    async def permission(self, session_id: str, *, tool_name: str, args_sha256: str) -> Permission | None:
-        """The permission a connector may act on: this exact call, under the session's current lease."""
+    async def permission(self, session_id: str, *, tool_name: str, args_sha256: str) -> PermissionLookup:
+        """The permission a connector may act on: this exact call, under the session's current lease.
+
+        A permitted answer carries the scope of the definition pinned to the
+        session, so the connector learns what the call may reach from the API
+        and from nothing else.
+        """
         session = await self.get_session(session_id)
         if session.lease is None:
-            return None
+            return PermissionLookup(permitted=False)
         docs = await self.store.query(
             f"sessions/{session_id}/permissions",
             where=[
@@ -564,8 +571,11 @@ class Service:
             ],
         )
         if not docs:
-            return None
-        return Permission.model_validate(max(docs, key=lambda d: d["created_at"]))
+            return PermissionLookup(permitted=False)
+        found = Permission.model_validate(max(docs, key=lambda d: d["created_at"]))
+        path = f"agents/{session.agent_id}/versions/{session.agent_version}"
+        version = await load(self.store, AgentVersion, path, f"version {session.agent_version} is not published")
+        return PermissionLookup(permitted=True, tool_use_id=found.tool_use_id, scope=DataScope.of(version))
 
     # --- inspection (Cloud Scheduler) --------------------------------------
 

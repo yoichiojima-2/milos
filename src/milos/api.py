@@ -299,8 +299,7 @@ def _internal(
     @router.get("/sessions/{session_id}/permissions")
     async def permission(session_id: Owned, tool_name: str, args_sha256: str) -> PermissionLookup:
         """Connector check: is this exact call permitted under the current lease?"""
-        found = await service.permission(session_id, tool_name=tool_name, args_sha256=args_sha256)
-        return PermissionLookup(permitted=found is not None, tool_use_id=found.tool_use_id if found else None)
+        return await service.permission(session_id, tool_name=tool_name, args_sha256=args_sha256)
 
     return router
 

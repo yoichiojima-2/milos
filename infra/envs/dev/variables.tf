@@ -68,6 +68,23 @@ variable "schedules" {
   default = {}
 }
 
+variable "datasets" {
+  description = "Shared BigQuery datasets in the data project, with provenance."
+  type = map(object({
+    description = string
+    source      = string
+  }))
+  default = {}
+}
+
+variable "workspaces" {
+  description = "Agents with a BigQuery workspace (`workspace: true` in the definition) and the shared datasets their definition lists."
+  type = map(object({
+    datasets = optional(list(string), [])
+  }))
+  default = {}
+}
+
 variable "alert_email" {
   type    = string
   default = null

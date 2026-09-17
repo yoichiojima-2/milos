@@ -111,7 +111,15 @@ class RunnerSettings:
 class ConnectorSettings:
     api_url: str  # the internal API, for permission checks
     data_bucket: str | None = None  # internal connector only: the approved data bucket
+    data_project: str | None = None  # internal connector only: the data project whose BigQuery datasets it reaches
+    workspace_service_accounts: dict[str, str] = field(default_factory=dict)  # agent id -> identity impersonated for BigQuery
 
     @classmethod
     def from_env(cls) -> Self:
-        return cls(api_url=_env("MILOS_INTERNAL_API_URL"), data_bucket=os.environ.get("MILOS_DATA_BUCKET"))
+        accounts: dict[str, str] = json.loads(os.environ.get("MILOS_WORKSPACE_SAS", "{}"))
+        return cls(
+            api_url=_env("MILOS_INTERNAL_API_URL"),
+            data_bucket=os.environ.get("MILOS_DATA_BUCKET"),
+            data_project=os.environ.get("MILOS_DATA_PROJECT"),
+            workspace_service_accounts=accounts,
+        )

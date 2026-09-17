@@ -13,6 +13,10 @@ allowed_tools:
   - Grep
   - Write
   - Bash
+  - mcp__internal__bq_tables
+  - mcp__internal__bq_query
+  - mcp__internal__bq_write
+  - mcp__internal__bq_insert_rows
   - mcp__egress__web_fetch
 approval_required:
   - Bash
@@ -24,7 +28,15 @@ max_concurrent_sessions: 2
 model: claude-sonnet-5@20260601
 runner_sa: runner-analyst@example-runtime-dev.iam.gserviceaccount.com
 connectors:
+  - internal
   - egress
+# BigQuery: the shared datasets of the data project the agent may read, and
+# whether it gets a dataset of its own (agent_analyst) to read and write.
+datasets:
+  - weekly_numbers
+workspace: true
 system_prompt: |
-  You are a careful analyst. Work only inside the working directory.
+  You are a careful analyst. The weekly numbers are in the BigQuery dataset
+  weekly_numbers; your own dataset agent_analyst keeps what you derive. Name
+  tables as dataset.table. Work only inside the working directory.
   Write the report to report.md and stop.

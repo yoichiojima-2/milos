@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from milos.errors import Invalid
-from milos.models import AgentVersion
+from milos.models import AgentVersion, DataScope
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -14,6 +14,7 @@ REPO = Path(__file__).resolve().parents[1]
 def test_example_definition_is_valid():
     version = AgentVersion.from_yaml(REPO / "agents" / "analyst.yaml")
     assert version.agent_id == "analyst" and len(version.definition_sha256) == 64
+    assert DataScope.of(version) == DataScope(agent_id="analyst", datasets=["weekly_numbers"], workspace="agent_analyst")
 
 
 def write(tmp_path: Path, **overrides) -> Path:
@@ -36,6 +37,9 @@ def write(tmp_path: Path, **overrides) -> Path:
         ({"connectors": []}, "needs connector"),
         ({"owner": "nobody"}, "email"),
         ({"unexpected": 1}, "unexpected"),
+        ({"workspace": False, "datasets": []}, "needs a workspace or datasets"),
+        ({"workspace": False}, "mcp__internal__bq_write writes; it needs workspace: true"),
+        ({"datasets": ["weekly-numbers"]}, "plain dataset ids"),
     ],
 )
 def test_invalid_definitions_are_rejected(tmp_path, overrides, message):

@@ -25,6 +25,7 @@ locals {
       "logging.googleapis.com",
       "monitoring.googleapis.com",
       "iam.googleapis.com",
+      "iamcredentials.googleapis.com", # the internal connector impersonates workspace identities
       "cloudresourcemanager.googleapis.com",
     ]
     logging = [

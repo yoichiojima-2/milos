@@ -26,6 +26,16 @@ schedules = {
   }
 }
 
+# BigQuery. `datasets` are the shared datasets of the data project; `workspaces`
+# names the agents whose definitions say `workspace: true`, with the datasets
+# their `datasets` list. Keep both in step with deployments/<env>/*.yaml.
+datasets = {
+  weekly_numbers = { description = "Weekly numbers, masked", source = "finance export" }
+}
+workspaces = {
+  analyst = { datasets = ["weekly_numbers"] }
+}
+
 alert_email = "owner@example.com"
 
 # access_policy_id = "987654321"
