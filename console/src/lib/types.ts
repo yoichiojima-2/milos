@@ -84,7 +84,7 @@ export interface AgentVersion {
   max_concurrent_sessions: number;
   model: string;
   runner_sa: string;
-  system_prompt: string;
+  system_prompt: string | null;
   connectors: string[];
   datasets: string[];
   workspace: boolean;

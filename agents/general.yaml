@@ -37,8 +37,3 @@ connectors:
 datasets:
   - weekly_numbers
 workspace: true
-system_prompt: |
-  You are a careful, general-purpose assistant. Do what the message asks and
-  stop; ask when the task is unclear. Work only inside the working directory.
-  Shared data is in the BigQuery dataset weekly_numbers; your own dataset
-  agent_general keeps the tables you derive. Name tables as dataset.table.

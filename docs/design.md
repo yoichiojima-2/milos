@@ -82,7 +82,7 @@ All seven are enforced in [`service.py`](../src/milos/service.py) and tested in 
 - Bash runs inside the runner container. The runner identity has exactly three reaches: Vertex AI (`roles/aiplatform.user`), the internal API (session token), and the snapshot bucket. Bash can reach nothing else, so allowing it does not widen what the agent can do.
 - The isolation rests on IAM minimisation. Bash can read the session token and the transcript; it cannot approve. Extra grants to a runner identity are what the service-account reconciliation (REQ-D-08) is for.
 - Cloud Run Jobs run on the second-generation execution environment (microVM). Cloud Run sandboxes (Preview) are not used: pre-GA offerings sit outside the data-processing terms.
-- The SDK's own tools stay enabled and `PreToolUse` sends every call to the API. `WebFetch` and `WebSearch` are disallowed; the web goes through a connector. `setting_sources=[]` keeps repository settings, hooks and skills out; the definition's system prompt is the only instruction.
+- The SDK's own tools stay enabled and `PreToolUse` sends every call to the API. `WebFetch` and `WebSearch` are disallowed; the web goes through a connector. `setting_sources=[]` keeps repository settings, hooks and skills out; the definition's system prompt, when it has one, is the only instruction. `system_prompt` is optional: a definition without it runs on the SDK's default prompt, and the console shows no prompt card for it.
 - Packages come from Artifact Registry remote repositories (PyPI, npm) over the restricted VIP. Common packages are baked into the image. Fetched packages are not inspected.
 
 ## 6. Security boundary

@@ -43,7 +43,7 @@ runner_sa: milos-runner-general@milos-runtime-dev.iam.gserviceaccount.com
 connectors: [internal, egress]
 datasets: [weekly_numbers]   # shared BigQuery datasets it may read
 workspace: true              # a dataset of its own, agent_general, to read and write
-system_prompt: |
+system_prompt: |             # optional; omit it to run on the SDK's default prompt
   You are a careful, general-purpose assistant. Work only inside the working directory.
 ```
 

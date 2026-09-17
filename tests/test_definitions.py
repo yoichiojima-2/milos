@@ -19,7 +19,11 @@ def test_example_definition_is_valid():
 
 def write(tmp_path: Path, **overrides) -> Path:
     data = yaml.safe_load((REPO / "agents" / "general.yaml").read_text())
-    data.update(overrides)
+    for key, value in overrides.items():
+        if value is ...:
+            data.pop(key, None)
+        else:
+            data[key] = value
     path = tmp_path / "agent.yaml"
     path.write_text(yaml.safe_dump(data))
     return path
@@ -46,6 +50,11 @@ def test_invalid_definitions_are_rejected(tmp_path, overrides, message):
     with pytest.raises(Invalid) as error:
         AgentVersion.from_yaml(write(tmp_path, **overrides))
     assert message in str(error.value)
+
+
+def test_system_prompt_is_optional(tmp_path):
+    version = AgentVersion.from_yaml(write(tmp_path, system_prompt=...))
+    assert version.system_prompt is None
 
 
 def test_all_problems_are_reported_at_once(tmp_path):
